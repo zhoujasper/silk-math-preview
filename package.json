@@ -1,0 +1,269 @@
+{
+  "name": "silk-math-preview",
+  "displayName": "Silk Math Preview",
+  "description": "光标走到哪，公式就在哪渲染。Live math preview that follows your caret.",
+  "version": "0.1.18",
+  "publisher": "silkmath",
+  "author": {
+    "name": "Jasper",
+    "url": "https://github.com/zhoujasper"
+  },
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0B1020",
+    "theme": "dark"
+  },
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhoujasper/silk-math-preview.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zhoujasper/silk-math-preview/issues"
+  },
+  "homepage": "https://github.com/zhoujasper/silk-math-preview#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization"
+  ],
+  "keywords": [
+    "latex",
+    "markdown",
+    "math",
+    "preview",
+    "formula"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:latex",
+    "onLanguage:tex",
+    "onLanguage:markdown",
+    "onLanguage:mdx",
+    "onCommand:silkMath.togglePreview",
+    "onCommand:silkMath.dismissPreview",
+    "onCommand:silkMath.reloadDefinitions",
+    "onCommand:silkMath.showPerformance",
+    "onCommand:silkMath.ocr.capture"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "silkMath.togglePreview",
+        "title": "Silk Math: 切换实时预览 / Toggle Live Preview"
+      },
+      {
+        "command": "silkMath.reloadDefinitions",
+        "title": "Silk Math: 重新加载自定义定义 / Reload Definitions"
+      },
+      {
+        "command": "silkMath.showPerformance",
+        "title": "Silk Math: 显示性能统计 / Show Performance"
+      },
+      {
+        "command": "silkMath.ocr.capture",
+        "title": "Silk Math: 截图识别公式或文字 / Capture Math or Text",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "silkMath.showMenu",
+        "title": "Silk Math: 打开状态栏菜单 / Open Status Menu"
+      },
+      {
+        "command": "silkMath.increasePreviewScale",
+        "title": "Silk Math: 放大预览 / Increase Preview Size"
+      },
+      {
+        "command": "silkMath.decreasePreviewScale",
+        "title": "Silk Math: 缩小预览 / Decrease Preview Size"
+      },
+      {
+        "command": "silkMath.resetPreviewScale",
+        "title": "Silk Math: 恢复默认预览大小 / Reset Preview Size"
+      },
+      {
+        "command": "silkMath.diagnoseFormula",
+        "title": "Silk Math: 诊断当前公式 / Diagnose Formula at Caret"
+      },
+      {
+        "command": "silkMath.togglePanel",
+        "title": "Silk Math: 打开控制面板 / Toggle Control Panel"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "silkMath.togglePreview",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorTextFocus && editorLangId =~ /^(latex|tex|markdown|mdx)$/"
+      },
+      {
+        "command": "silkMath.dismissPreview",
+        "key": "escape",
+        "when": "editorTextFocus && silkMath.previewVisible"
+      }
+    ],
+    "configuration": {
+      "title": "Silk Math Preview",
+      "properties": {
+        "silkMath.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "光标位于公式中时显示实时预览。Show a live preview while the caret is inside a formula."
+        },
+        "silkMath.debounceMs": {
+          "type": "number",
+          "default": 8,
+          "minimum": 0,
+          "maximum": 250,
+          "description": "合并连续输入的等待时间（毫秒）。Debounce delay for consecutive edits, in milliseconds."
+        },
+        "silkMath.previewPosition": {
+          "type": "string",
+          "enum": [
+            "below",
+            "above"
+          ],
+          "enumDescriptions": [
+            "在当前公式下方悬浮显示。Float below the active formula.",
+            "在当前公式上方悬浮显示。Float above the active formula."
+          ],
+          "default": "below",
+          "description": "预览以不改变源码行高的浮层显示在公式下方或上方；旧 after/before 设置会自动迁移。Float below or above without changing source line height; legacy after/before values migrate automatically."
+        },
+        "silkMath.enableInLatex": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 LaTeX / TeX 文件中启用实时预览。Enable the live preview in LaTeX/TeX files."
+        },
+        "silkMath.enableInMarkdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 Markdown / MDX 文件中启用实时预览。Enable the live preview in Markdown/MDX files."
+        },
+        "silkMath.enableInOtherFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "在其他所有文件类型中按 LaTeX 语法识别公式。Recognize math with LaTeX syntax in every other file type."
+        },
+        "silkMath.previewScale": {
+          "type": "number",
+          "default": 1.1,
+          "minimum": 0.5,
+          "maximum": 3,
+          "description": "预览公式相对编辑器字号的缩放；1 表示与编辑器字号等高。Preview size relative to the editor font size; 1 matches the editor font."
+        },
+        "silkMath.trace": {
+          "type": "boolean",
+          "default": false,
+          "description": "把每次渲染的表达式、尺寸与错误写入“Silk Math”输出面板，便于反馈问题。Log each render to the Silk Math output channel for troubleshooting."
+        },
+        "silkMath.markUnknownCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "把未定义的命令按红色原文显示出来，而不是让整条公式渲染失败。Render undefined commands as red text instead of failing the whole formula."
+        },
+        "silkMath.showRenderErrors": {
+          "type": "boolean",
+          "default": true,
+          "description": "公式始终无法渲染时在浮层里显示原因，而不是什么都不显示。Show the reason in the floating panel when a formula never renders, instead of showing nothing."
+        },
+        "silkMath.showCaret": {
+          "type": "boolean",
+          "default": true,
+          "description": "在渲染公式中显示与源码同步的细光标。Show the source-synchronized caret in rendered math."
+        },
+        "silkMath.maxFormulaChars": {
+          "type": "number",
+          "default": 20000,
+          "minimum": 256,
+          "maximum": 100000,
+          "description": "单个公式允许预览的最大字符数。Maximum previewable characters per formula."
+        },
+        "silkMath.rendererIdleMs": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "maximum": 600000,
+          "description": "无预览请求后释放渲染 Worker 的等待时间。Delay before releasing an idle render Worker."
+        },
+        "silkMath.customMathEnvironments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "额外明确视为数学模式的环境名称。Additional environment names treated as math mode."
+        },
+        "silkMath.quickFixOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "对高置信、无歧义的命令拼写错误显示诊断和显式 Quick Fix；不会静默修改源码。Offer explicit Quick Fixes for high-confidence command typos; source is never changed silently."
+        },
+        "silkMath.ocr.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "在状态栏菜单中显示按需安装的本地截图公式/文字识别入口。Show the on-demand local screenshot OCR entry in the Silk Math status menu."
+        }
+      }
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "silkMath",
+          "title": "Silk Math",
+          "icon": "resources/panel-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "silkMath": [
+        {
+          "type": "webview",
+          "id": "silkMath.controlPanel",
+          "name": "公式预览与设置 / Preview & settings"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "benchmark": "node scripts/benchmark.mjs",
+    "validate:ocr-pack": "node scripts/validate-ocr-pack.mjs",
+    "check:size": "node scripts/check-size.mjs",
+    "verify": "npm run typecheck && npm run coverage && npm run build && npm run benchmark && npm run check:size",
+    "package": "npm run verify && vsce package && npm run check:size"
+  },
+  "devDependencies": {
+    "@mathjax/mathjax-tex-font": "4.1.3",
+    "@mathjax/src": "4.1.3",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "@vscode/vsce": "^3.9.2",
+    "@xmldom/xmldom": "^0.9.11",
+    "esbuild": "^0.28.2",
+    "onnxruntime-web": "1.26.0",
+    "ppu-paddle-ocr": "5.8.3",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}
