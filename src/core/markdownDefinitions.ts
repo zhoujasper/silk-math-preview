@@ -75,6 +75,35 @@ export function parseMarkdownDefinitions(
   return parseMarkdownDefinitionSource(text, sourceId, endOffset).definitions;
 }
 
+export interface NotebookCellSource {
+  readonly id: string;
+  readonly index: number;
+  readonly kind: 'markup' | 'code';
+  readonly text: string;
+}
+
+/**
+ * Jupyter 每个 markdown 单元格是独立文档。作业里常见第一格写
+ * `$\def\A{\mathbf{A}}$`，后面格子再用 `\A`。这里按单元格顺序收集当前格
+ * 及之前所有 markup 格的定义。
+ */
+export function parseNotebookDefinitionSources(
+  cells: readonly NotebookCellSource[],
+  currentIndex: number,
+  currentEndOffset = Number.POSITIVE_INFINITY,
+): MarkdownDefinitionResult {
+  const definitions: ParsedDefinition[] = [];
+  const dependencies: ParsedDependency[] = [];
+  for (const cell of cells) {
+    if (cell.kind !== 'markup' || cell.index > currentIndex) continue;
+    const limit = cell.index === currentIndex ? currentEndOffset : cell.text.length;
+    const parsed = parseMarkdownDefinitionSource(cell.text, cell.id, limit);
+    definitions.push(...parsed.definitions);
+    dependencies.push(...parsed.dependencies);
+  }
+  return { definitions, dependencies };
+}
+
 /** 仅遮蔽 Markdown code，保留 UTF-16 长度和换行。 */
 export function maskMarkdownCode(text: string): string {
   const ignored = scanMathRegions(text, { language: 'markdown' }).ignoredRanges;

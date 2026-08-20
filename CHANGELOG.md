@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.1.23 - 2026-08-20
+
+- 修复 Jupyter：前面 markdown 单元格里的 `$\def\A{\mathbf{A}}$` 现在会被后面的单元格使用。
+  以前每个单元格是独立文档，自定义宏出了当前格就失效。
+
 ## 0.1.22 - 2026-08-20
 
 - 修复 `\underbrace` / `\sqrt` / `\overline` 等预览空白：MathJax 会在公式里再嵌一层

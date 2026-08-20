@@ -1,5 +1,11 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-20 Jupyter 跨单元格宏（0.1.23）
+
+- `.ipynb` 每个 markdown 单元格是独立 TextDocument。作业里第一格
+  `$\def\A{\mathbf{A}}$`，后面格子用 `\A` 会被标成未知命令。
+- 预览当前格时，收集该格及之前所有 markup 格的定义。代码格不参与。
+
 ## 2026-08-20 underbrace 空白预览（0.1.22）
 
 - `\underbrace{...}_{...}` 的拉伸横杠是**内层 `<svg>`**。`/<svg>[\s\S]*?<\/svg>/` 吃到

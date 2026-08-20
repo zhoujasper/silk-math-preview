@@ -51,9 +51,12 @@ vi.mock('vscode', () => {
     Uri: MockUri,
     EventEmitter: MockEventEmitter,
     FileType: { File: 1 },
+    NotebookCellKind: { Markup: 1, Code: 2 },
     workspace: {
       createFileSystemWatcher: () => watcher,
       onDidSaveTextDocument: noEvent,
+      onDidChangeNotebookDocument: noEvent,
+      notebookDocuments: [],
       getWorkspaceFolder: (uri: MockUri) => uri.path.startsWith('/ws/') ? folder : undefined,
       asRelativePath: (uri: MockUri) => uri.path.replace(/^\/ws\//, ''),
       fs: {

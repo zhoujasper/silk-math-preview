@@ -1,5 +1,9 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-20 Jupyter 跨单元格宏（0.1.23）
+
+- notebook 宏作用域是“当前格及之前的 markdown 格”，不是整个 ipynb 文件当一份 tex。
+
 ## 2026-08-20 underbrace 空白预览（0.1.22）
 
 - 空白大面板 + 有宽高 = SVG 被截断，不是 MathJax 没画出 path。先数 `<svg` 和 `</svg>`。

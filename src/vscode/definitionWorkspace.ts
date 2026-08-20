@@ -7,7 +7,7 @@ import type { ParsedDefinition } from '../core/definitionParser.js';
 import { environmentEntersMathMode, parseDefinitions } from '../core/definitionParser.js';
 import type { ParsedDependency } from '../core/dependencyParser.js';
 import { parseDependencies } from '../core/dependencyParser.js';
-import { parseMarkdownDefinitionSource } from '../core/markdownDefinitions.js';
+import { parseMarkdownDefinitionSource, parseNotebookDefinitionSources } from '../core/markdownDefinitions.js';
 
 export interface DefinitionSnapshot {
   readonly fingerprint: string;
@@ -84,7 +84,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
     this.maxFiles = Math.max(1, Math.floor(options.maxFiles ?? DEFAULT_MAX_FILES));
     this.maxFileBytes = Math.max(1024, Math.floor(options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES));
 
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{tex,sty,cls,md,markdown,mdx}');
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{tex,sty,cls,md,markdown,mdx,ipynb}');
     this.disposables.push(
       watcher,
       watcher.onDidChange((uri) => this.invalidate(uri)),
@@ -94,6 +94,9 @@ export class DefinitionWorkspace implements vscode.Disposable {
         if (isSupportedDocument(document)) {
           this.invalidate(document.uri);
         }
+      }),
+      vscode.workspace.onDidChangeNotebookDocument((event) => {
+        this.invalidate(event.notebook.uri);
       }),
     );
   }
@@ -107,11 +110,15 @@ export class DefinitionWorkspace implements vscode.Disposable {
     }
 
     const boundedOffset = Math.max(0, Math.min(documentLength(document), Math.floor(offset ?? documentLength(document))));
-    const parsed = this.parseDocument(document);
-    const effectiveOffset = snapshotBoundary(parsed, boundedOffset);
+    const notebookContext = notebookContextFor(document);
+    const parsed = notebookContext
+      ? parseNotebookCells(notebookContext.notebook, document, boundedOffset)
+      : this.parseDocument(document);
+    const effectiveOffset = notebookContext ? boundedOffset : snapshotBoundary(parsed, boundedOffset);
     const documentKey = uriKey(document.uri);
     const key = [
       this.invalidationGeneration,
+      notebookContext?.notebook.version ?? 0,
       document.version,
       effectiveOffset,
     ].join(':');
@@ -191,7 +198,9 @@ export class DefinitionWorkspace implements vscode.Disposable {
       loadOrder: 0,
       fileCount: 0,
     };
-    await this.visitSource(document.uri, parsed, state, offset, true);
+    const notebook = notebookContaining(document);
+    // notebook 单元格已经在 parse 时按“当前格及之前”裁过，这里不再用单元格内 offset 二次裁剪。
+    await this.visitSource(document.uri, parsed, state, notebook ? Number.POSITIVE_INFINITY : offset, true);
     index.replaceSources(state.sourceBatches);
     return makeSnapshot(index, state.limitations);
   }
@@ -572,4 +581,36 @@ function isSupportedDocument(document: vscode.TextDocument): boolean {
     || document.languageId === 'tex'
     || document.languageId === 'markdown'
     || document.languageId === 'mdx';
+}
+
+function notebookContaining(document: vscode.TextDocument): vscode.NotebookDocument | undefined {
+  for (const notebook of vscode.workspace.notebookDocuments) {
+    if (notebook.getCells().some((cell) => uriKey(cell.document.uri) === uriKey(document.uri))) {
+      return notebook;
+    }
+  }
+  return undefined;
+}
+
+function notebookContextFor(document: vscode.TextDocument): {
+  readonly notebook: vscode.NotebookDocument;
+} | undefined {
+  const notebook = notebookContaining(document);
+  return notebook ? { notebook } : undefined;
+}
+
+function parseNotebookCells(
+  notebook: vscode.NotebookDocument,
+  document: vscode.TextDocument,
+  currentEndOffset: number,
+): ParsedSource {
+  const cells = notebook.getCells();
+  const currentIndex = cells.findIndex((cell) => uriKey(cell.document.uri) === uriKey(document.uri));
+  const sources = cells.map((cell, index) => ({
+    id: uriKey(cell.document.uri),
+    index: cell.index ?? index,
+    kind: cell.kind === vscode.NotebookCellKind.Markup ? 'markup' as const : 'code' as const,
+    text: cell.document.getText(),
+  }));
+  return parseNotebookDefinitionSources(sources, currentIndex < 0 ? 0 : currentIndex, currentEndOffset);
 }

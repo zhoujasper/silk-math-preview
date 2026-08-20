@@ -4,6 +4,7 @@ import {
   maskMarkdownCode,
   parseMarkdownDefinitionSource,
   parseMarkdownDefinitions,
+  parseNotebookDefinitionSources,
 } from '../src/core/markdownDefinitions.js';
 
 describe('Markdown 数学定义', () => {
@@ -138,5 +139,67 @@ macros:
     expect(definitions[1]?.replacement).toBe('\\q');
     expect(parseMarkdownDefinitions('ordinary Markdown')).toEqual([]);
     expect(parseMarkdownDefinitions('---\nmacros: { invalid-entry }\n---')).toEqual([]);
+  });
+
+  it('markdown 公式里的 \\def 也会进入定义索引', () => {
+    const definitions = parseMarkdownDefinitions(
+      String.raw`$\def\A{\mathbf{A}} \def\C{\mathbb{C}} \def\I{\mathbf{I}}$`,
+    );
+    expect(definitions.map((definition) => definition.name)).toEqual([
+      '\\A',
+      '\\C',
+      '\\I',
+    ]);
+    expect(definitions[0]?.replacement).toBe(String.raw`\mathbf{A}`);
+  });
+
+  it('Jupyter 后面的 markdown 单元格能用到前面单元格里的 \\def', () => {
+    const result = parseNotebookDefinitionSources([
+      {
+        id: 'cell-0',
+        index: 0,
+        kind: 'markup',
+        text: String.raw`$\def\A{\mathbf{A}} \def\I{\mathbf{I}}$`,
+      },
+      {
+        id: 'cell-1',
+        index: 1,
+        kind: 'code',
+        text: String.raw`\def\ignored{\mathbf{X}}`,
+      },
+      {
+        id: 'cell-2',
+        index: 2,
+        kind: 'markup',
+        text: String.raw`$z$ is an eigenvalue of $\A + \Delta \A$`,
+      },
+    ], 2);
+    expect(result.definitions.map((definition) => definition.name)).toEqual([
+      '\\A',
+      '\\I',
+    ]);
+  });
+
+  it('当前单元格只收集光标之前的定义', () => {
+    const current = String.raw`$\def\A{\mathbf{A}}$ later $\def\Z{\mathbf{Z}}$`;
+    const cut = current.indexOf('later');
+    const result = parseNotebookDefinitionSources([
+      {
+        id: 'cell-0',
+        index: 0,
+        kind: 'markup',
+        text: String.raw`$\def\I{\mathbf{I}}$`,
+      },
+      {
+        id: 'cell-1',
+        index: 1,
+        kind: 'markup',
+        text: current,
+      },
+    ], 1, cut);
+    expect(result.definitions.map((definition) => definition.name)).toEqual([
+      '\\I',
+      '\\A',
+    ]);
   });
 });
