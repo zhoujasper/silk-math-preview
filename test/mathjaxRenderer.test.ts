@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DOMParser } from '@xmldom/xmldom';
 
-import { MathJaxSvgRenderer, sanitizeStandaloneSvg } from '../src/render/mathjaxRenderer';
+import { extractRootSvg, MathJaxSvgRenderer, sanitizeStandaloneSvg } from '../src/render/mathjaxRenderer';
 import { scanMathRegions } from '../src/core/mathScanner';
 import { buildPreviewExpression } from '../src/core/previewExpression';
 
@@ -234,6 +234,39 @@ describe('MathJaxSvgRenderer', () => {
         || result.svg.includes('<rect');
       expect(drawable).toBe(true);
     }
+    renderer.clear();
+  });
+
+  it('underbrace / sqrt 的嵌套 svg 不会把根节点截断', () => {
+    const nested = '<mjx-container><svg id="root" width="10ex"><g><svg class="inner" width="2"><path d="M0 0"/></svg><path data-c="after"/></g></svg></mjx-container>';
+    const extracted = extractRootSvg(nested);
+    expect(extracted).toContain('id="root"');
+    expect(extracted).toContain('class="inner"');
+    expect(extracted).toContain('data-c="after"');
+    expect(extracted.startsWith('<svg')).toBe(true);
+    expect(extracted.endsWith('</svg>')).toBe(true);
+    expect((extracted.match(/<\/svg>/g) ?? []).length).toBe(2);
+
+    const renderer = new MathJaxSvgRenderer();
+    const underbrace = renderer.render({
+      ...options,
+      definitionPrelude: '',
+      expression: String.raw`\tau^n_m=\underbrace{(u_t)^{n+1}_m}_{=0 \text{ by the PDE}}+\mathcal{O}(\Delta t)`,
+    });
+    expect((underbrace.svg.match(/<svg\b/g) ?? []).length).toBeGreaterThan(1);
+    expect(underbrace.svg).toContain('data-c="1D70F"');
+    expect(underbrace.svg).toMatch(/data-c="1D4[A-F0-9]{2}"/);
+    expect(underbrace.widthPx).toBeGreaterThan(40);
+    expect(underbrace.heightPx).toBeGreaterThan(10);
+    expectValidSvg(underbrace.svg);
+
+    const sqrt = renderer.render({
+      ...options,
+      definitionPrelude: '',
+      expression: String.raw`\sqrt{\frac{a+b}{c+d}}`,
+    });
+    expect(sqrt.svg).toContain('<path');
+    expectValidSvg(sqrt.svg);
     renderer.clear();
   });
 

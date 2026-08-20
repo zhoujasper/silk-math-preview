@@ -148,12 +148,30 @@ function extractLength(attributes: string, name: 'width' | 'height'): string | u
 function extractViewBoxDimension(attributes: string, axis: 0 | 1): number | undefined {
   const values = /\bviewBox\s*=\s*"([^"]+)"/i.exec(attributes)?.[1]?.trim().split(/\s+/).map((entry) => Number(entry));
   if (!values || values.length < 4) return undefined;
-  const [xMin, yMin, xMax, yMax] = values;
-  if (xMin === undefined || yMin === undefined || xMax === undefined || yMax === undefined) return undefined;
-  const width = xMax - xMin;
-  const height = yMax - yMin;
-  const dimension = axis === 0 ? width : height;
-  return Number.isFinite(dimension) ? dimension : undefined;
+  // SVG viewBox 是 min-x min-y width height，不是 min/max 对角点。
+  const dimension = axis === 0 ? values[2] : values[3];
+  return dimension !== undefined && Number.isFinite(dimension) && dimension > 0 ? dimension : undefined;
+}
+
+/**
+ * `\underbrace` / `\sqrt` / `\overline` 会在公式里再嵌一层 `<svg>`。
+ * 用非贪婪的第一个 `</svg>` 会把根节点截断，VS Code 画不出图，只剩空白底。
+ */
+export function extractRootSvg(raw: string): string {
+  const start = raw.search(/<svg\b/i);
+  if (start < 0) throw new Error('MathJax 未返回 SVG');
+  let depth = 0;
+  const tag = /<svg\b[^>]*>|<\/svg>/gi;
+  tag.lastIndex = start;
+  let match: RegExpExecArray | null;
+  while ((match = tag.exec(raw))) {
+    const closing = match[0].startsWith('</');
+    depth += closing ? -1 : 1;
+    if (closing && depth === 0) {
+      return raw.slice(start, match.index + match[0].length);
+    }
+  }
+  throw new Error('MathJax 返回的 SVG 未闭合');
 }
 
 /**
@@ -161,12 +179,9 @@ function extractViewBoxDimension(attributes: string, axis: 0 | 1): number | unde
  * 并把主题色与私有 caret 样式写进独立 SVG。
  */
 export function sanitizeStandaloneSvg(raw: string, foreground: string, caretColor: string): string {
-  const svgMatch = raw.match(/<svg\b[\s\S]*?<\/svg>/i);
-  if (!svgMatch) throw new Error('MathJax 未返回 SVG');
-
   const fg = escapeCssColor(foreground, '#d4d4d4');
   const caret = escapeCssColor(caretColor, '#ffb454');
-  let svg = svgMatch[0]
+  let svg = extractRootSvg(raw)
     .replace(/<script\b[\s\S]*?<\/script>/gi, '')
     .replace(/<style\b[\s\S]*?<\/style>/gi, '')
     .replace(/<foreignObject\b[\s\S]*?<\/foreignObject>/gi, '')

@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.1.22 - 2026-08-20
+
+- 修复 `\underbrace` / `\sqrt` / `\overline` 等预览空白：MathJax 会在公式里再嵌一层
+  `<svg>`，以前取到第一个 `</svg>` 就把根节点截断，VS Code 只画出空底。
+- 修正 viewBox 宽高解析（min-x min-y **width height**）。
+
 ## 0.1.21 - 2026-08-20
 
 - 截图识别改为默认**智能模式**：公式转成 LaTeX，旁边的文字一并保留；仍可只认公式或只认文字。

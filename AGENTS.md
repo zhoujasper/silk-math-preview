@@ -1,5 +1,11 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-20 underbrace 空白预览（0.1.22）
+
+- `\underbrace{...}_{...}` 的拉伸横杠是**内层 `<svg>`**。`/<svg>[\s\S]*?<\/svg>/` 吃到
+  内层结束就把根 SVG 截断，装饰仍有宽高（空面板）但图加载失败。
+- 同类：`\overbrace`、`\overline`、`\underline`、可拉伸 `\sqrt`。提取必须按嵌套深度配对。
+
 ## 2026-08-20 OCR 智能混排与预处理（0.1.21）
 
 - MFR 输入禁止拉伸：按比例 letterbox + 10% 留白。VS Code 深色截图先按内容区平均亮度反相。

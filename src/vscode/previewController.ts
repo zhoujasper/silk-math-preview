@@ -166,7 +166,10 @@ function unsupportedContent(source: string): string | undefined {
 }
 
 function dataUri(svg: string): vscode.Uri {
-  return vscode.Uri.parse(`data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`);
+  return vscode.Uri.from({
+    scheme: 'data',
+    path: `image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`,
+  });
 }
 
 /** 浮层落点与 SVG 尺寸都要跟随编辑器字体，读取的是文档作用域下的生效值。 */

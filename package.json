@@ -2,7 +2,7 @@
   "name": "silk-math-preview",
   "displayName": "Silk Math Preview",
   "description": "光标走到哪，公式就在哪渲染。Live math preview that follows your caret.",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "publisher": "silkmath",
   "author": {
     "name": "Jasper",
