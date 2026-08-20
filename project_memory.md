@@ -1,5 +1,9 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-20 长公式上半段选中预览消失（0.1.20）
+
+- 浮层必须锚在视口内的行。首行滚出去等于 decoration DOM 被回收。
+
 ## 2026-08-20 状态栏点击设置卡片（0.1.19）
 
 - 底部 webview view 会铺满面板，不像 Copilot 浮层。改到 secondarySidebar 紧凑卡片。

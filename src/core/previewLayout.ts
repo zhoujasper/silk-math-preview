@@ -15,6 +15,45 @@ export interface EditorMetrics {
   readonly exPx: number;
 }
 
+export interface PreviewAnchorInput {
+  readonly formulaStartLine: number;
+  readonly formulaEndLine: number;
+  readonly visibleStartLine: number;
+  readonly visibleEndLine: number;
+  readonly placement?: unknown;
+}
+
+export interface PreviewAnchor {
+  /** decoration 的 `before` 挂在这一行；必须在视口内，否则浮层会被虚拟化掉。 */
+  readonly anchorLine: number;
+  readonly lineSpan: number;
+}
+
+/**
+ * 浮层必须锚在当前视口里的公式行上。VS Code 不会给滚出屏幕的行创建
+ * decoration DOM，绝对定位再准也会整块消失。
+ * 锚在可见重叠的最后一行（above 则第一行），只需跨过这一行本身。
+ */
+export function resolvePreviewAnchor(input: PreviewAnchorInput): PreviewAnchor {
+  const formulaStart = Math.max(0, Math.round(finite(input.formulaStartLine, 0)));
+  const formulaEnd = Math.max(formulaStart, Math.round(finite(input.formulaEndLine, formulaStart)));
+  const visibleStart = Math.round(finite(input.visibleStartLine, formulaStart));
+  const visibleEnd = Math.max(visibleStart, Math.round(finite(input.visibleEndLine, visibleStart)));
+  const placement = normalizePreviewPlacement(input.placement);
+  const overlapStart = Math.max(formulaStart, visibleStart);
+  const overlapEnd = Math.min(formulaEnd, visibleEnd);
+  if (overlapStart <= overlapEnd) {
+    return {
+      anchorLine: placement === 'above' ? overlapStart : overlapEnd,
+      lineSpan: 1,
+    };
+  }
+  return {
+    anchorLine: placement === 'above' ? formulaStart : formulaEnd,
+    lineSpan: 1,
+  };
+}
+
 export interface FloatingPreviewInput {
   /** SVG 的真实像素宽度；必须与写进 SVG 根节点的宽度完全一致。 */
   readonly widthPx: number;

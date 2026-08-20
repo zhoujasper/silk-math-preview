@@ -4,6 +4,7 @@ import {
   floatingPreviewLayout,
   normalizePreviewPlacement,
   resolveEditorMetrics,
+  resolvePreviewAnchor,
 } from '../src/core/previewLayout';
 
 describe('resolveEditorMetrics', () => {
@@ -23,6 +24,36 @@ describe('resolveEditorMetrics', () => {
     });
     expect(resolveEditorMetrics(Number.NaN, -5).fontSizePx).toBe(14);
     expect(resolveEditorMetrics(500, 4000)).toEqual({ fontSizePx: 100, lineHeightPx: 150, exPx: 50 });
+  });
+});
+
+describe('resolvePreviewAnchor', () => {
+  it('锚在视口与公式重叠的最后一行，避免首行滚出屏幕后浮层被虚拟化', () => {
+    expect(resolvePreviewAnchor({
+      formulaStartLine: 105,
+      formulaEndLine: 115,
+      visibleStartLine: 109,
+      visibleEndLine: 138,
+    })).toEqual({ anchorLine: 115, lineSpan: 1 });
+  });
+
+  it('视口只看得到公式上半段时锚在可见的最后一行', () => {
+    expect(resolvePreviewAnchor({
+      formulaStartLine: 105,
+      formulaEndLine: 115,
+      visibleStartLine: 100,
+      visibleEndLine: 110,
+    })).toEqual({ anchorLine: 110, lineSpan: 1 });
+  });
+
+  it('above 锚在可见重叠的第一行', () => {
+    expect(resolvePreviewAnchor({
+      formulaStartLine: 105,
+      formulaEndLine: 115,
+      visibleStartLine: 109,
+      visibleEndLine: 138,
+      placement: 'above',
+    })).toEqual({ anchorLine: 109, lineSpan: 1 });
   });
 });
 

@@ -1,5 +1,12 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-20 长公式上半段选中预览消失（0.1.20）
+
+- decoration 的 `before` 挂在公式首行。长 `aligned` 把首行滚出视口后，VS Code 虚拟化
+  掉那一行，绝对定位的浮层整块不画。锚点改为视口与公式重叠的最后一行（above 则第一行），
+  `onDidChangeTextEditorVisibleRanges` 只 reposition，不跑 MathJax。
+- 选区用 overlap 判断，不能只看 `selection.active`：往上拖时 active 可能暂时越界。
+
 ## 2026-08-20 状态栏点击设置卡片（0.1.19）
 
 - 用户不要下方面板那种整条占位，要点击 Silk Math 出现 Copilot 那种小卡片。

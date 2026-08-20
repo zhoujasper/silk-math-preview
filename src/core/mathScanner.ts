@@ -562,6 +562,20 @@ export function scanMathRegions(
   return { regions, ignoredRanges };
 }
 
+/** 闭区间规则与 {@link findMathRegionAt} 一致：闭合区域不含 end。 */
+export function regionContainsOffset(region: MathRegion, offset: number): boolean {
+  if (offset < region.start || offset > region.end) return false;
+  return !(offset === region.end && region.closed);
+}
+
+/** 选区只要和公式有交集就还算“在公式里”，避免往上拖选时把预览清掉。 */
+export function selectionOverlapsRegion(start: number, end: number, region: MathRegion): boolean {
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  if (from === to) return regionContainsOffset(region, from);
+  return from < region.end && to > region.start;
+}
+
 /** 在已排序且不重叠的扫描结果中二分查找光标所在公式。 */
 export function findMathRegionAt(
   regions: readonly MathRegion[],

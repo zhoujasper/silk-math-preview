@@ -4,7 +4,9 @@ import {
   advanceMarkdownFenceState,
   findMathRegionAt,
   mathRegionContent,
+  regionContainsOffset,
   scanMathRegions,
+  selectionOverlapsRegion,
 } from '../src/core/mathScanner';
 
 describe('scanMathRegions', () => {
@@ -234,5 +236,15 @@ describe('scanMathRegions', () => {
     const openText = '$x';
     const open = scanMathRegions(openText).regions[0]!;
     expect(findMathRegionAt([open], openText.length)).toBe(open);
+  });
+
+  it('选区与公式有交集时不算离开，空选区仍按闭合尾端判断', () => {
+    const closed = scanMathRegions('a $x+y$ b').regions[0]!;
+    expect(regionContainsOffset(closed, closed.contentStart)).toBe(true);
+    expect(regionContainsOffset(closed, closed.end)).toBe(false);
+    expect(selectionOverlapsRegion(closed.start, closed.end + 4, closed)).toBe(true);
+    expect(selectionOverlapsRegion(closed.contentStart, closed.contentStart + 1, closed)).toBe(true);
+    expect(selectionOverlapsRegion(0, 1, closed)).toBe(false);
+    expect(selectionOverlapsRegion(closed.end, closed.end, closed)).toBe(false);
   });
 });
