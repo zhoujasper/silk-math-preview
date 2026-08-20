@@ -1,5 +1,9 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-20 默认预览 140% 显示为 100%（0.1.24）
+
+- `silkMath.previewScale` 默认 `1.4`。界面百分比 = 实际倍率 / 1.4。
+
 ## 2026-08-20 Jupyter 跨单元格宏（0.1.23）
 
 - `.ipynb` 每个 markdown 单元格是独立 TextDocument。作业里第一格

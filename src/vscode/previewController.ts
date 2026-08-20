@@ -101,7 +101,7 @@ function readSettings(): PreviewSettings {
     showCaret: config.get('showCaret', true),
     maxFormulaChars: config.get('maxFormulaChars', 20_000),
     rendererIdleMs: config.get('rendererIdleMs', 60_000),
-    previewScale: config.get('previewScale', 1.1),
+    previewScale: config.get('previewScale', 1.4),
     showRenderErrors: config.get('showRenderErrors', true),
     markUnknownCommands: config.get('markUnknownCommands', true),
     trace: config.get('trace', false),

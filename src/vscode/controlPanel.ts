@@ -282,7 +282,7 @@ export class ControlPanelProvider implements vscode.WebviewViewProvider, vscode.
     </div>
 
     <div class="sec">
-      <div class="label"><span>预览大小</span><span class="value" id="percent">110%</span></div>
+      <div class="label"><span>预览大小</span><span class="value" id="percent">100%</span></div>
       <div class="slider-row">
         <button class="icon" id="minus" title="缩小 5%">−</button>
         <input type="range" id="slider" min="50" max="300" step="5">
@@ -322,11 +322,12 @@ export class ControlPanelProvider implements vscode.WebviewViewProvider, vscode.
   const vscode = acquireVsCodeApi();
   const $ = (id) => document.getElementById(id);
   const send = (type, value) => vscode.postMessage({ type, value });
-  $('minus').onclick = () => send('scale', -0.05);
-  $('plus').onclick = () => send('scale', 0.05);
+  let defaultScale = 1.4;
+  $('minus').onclick = () => send('scale', -0.05 * defaultScale);
+  $('plus').onclick = () => send('scale', 0.05 * defaultScale);
   $('reset').onclick = () => send('resetScale');
   $('slider').oninput = (event) => { $('percent').textContent = event.target.value + '%'; };
-  $('slider').onchange = (event) => send('scaleTo', Number(event.target.value) / 100);
+  $('slider').onchange = (event) => send('scaleTo', Number(event.target.value) / 100 * defaultScale);
   $('latex').onclick = () => send('toggle', 'enableInLatex');
   $('markdown').onclick = () => send('toggle', 'enableInMarkdown');
   $('others').onclick = () => send('toggle', 'enableInOtherFiles');
@@ -342,12 +343,13 @@ export class ControlPanelProvider implements vscode.WebviewViewProvider, vscode.
   window.addEventListener('message', (event) => {
     const state = event.data;
     if (!state || state.type !== 'state') return;
-    const percent = Math.round(state.scale * 100);
-    $('slider').min = Math.round(state.minScale * 100);
-    $('slider').max = Math.round(state.maxScale * 100);
+    defaultScale = Number(state.defaultScale) || 1.4;
+    const percent = Math.round(state.scale / defaultScale * 100);
+    $('slider').min = String(Math.round(state.minScale / defaultScale * 100));
+    $('slider').max = String(Math.round(state.maxScale / defaultScale * 100));
     $('slider').value = String(percent);
     $('percent').textContent = percent + '%';
-    $('reset').title = '恢复默认 ' + Math.round(state.defaultScale * 100) + '%';
+    $('reset').title = '恢复默认 100%';
     $('latex').classList.toggle('on', !!state.enableInLatex);
     $('markdown').classList.toggle('on', !!state.enableInMarkdown);
     $('others').classList.toggle('on', !!state.enableInOtherFiles);

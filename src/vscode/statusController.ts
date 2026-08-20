@@ -11,8 +11,13 @@ const SNOOZE_CHOICES: ReadonlyArray<{ readonly minutes: number; readonly label: 
 /** 预览缩放：与 package.json 的取值范围保持一致。 */
 export const MIN_SCALE = 0.5;
 export const MAX_SCALE = 3;
-export const DEFAULT_SCALE = 1.1;
-const SCALE_STEP = 0.05;
+/** 实际渲染倍率 1.4（相对编辑器字号 140%），界面把这个大小显示成 100%。 */
+export const DEFAULT_SCALE = 1.4;
+const SCALE_STEP = DEFAULT_SCALE * 0.05;
+
+export function scaleToDisplayPercent(scale: number): number {
+  return Math.round((scale / DEFAULT_SCALE) * 100);
+}
 
 interface MenuItem extends vscode.QuickPickItem {
   readonly run?: () => unknown;
@@ -226,16 +231,16 @@ export class StatusController implements vscode.Disposable {
     return [
       separator('预览大小 / Preview size'),
       {
-        label: `$(add) 放大到 ${Math.round(Math.min(MAX_SCALE, scale + SCALE_STEP) * 100)}%`,
+        label: `$(add) 放大到 ${scaleToDisplayPercent(Math.min(MAX_SCALE, scale + SCALE_STEP))}%`,
         run: () => this.adjustPreviewScale(SCALE_STEP),
       },
       {
-        label: `$(remove) 缩小到 ${Math.round(Math.max(MIN_SCALE, scale - SCALE_STEP) * 100)}%`,
+        label: `$(remove) 缩小到 ${scaleToDisplayPercent(Math.max(MIN_SCALE, scale - SCALE_STEP))}%`,
         run: () => this.adjustPreviewScale(-SCALE_STEP),
       },
       {
-        label: `$(discard) 恢复默认 ${Math.round(DEFAULT_SCALE * 100)}%`,
-        description: `当前 ${Math.round(scale * 100)}%`,
+        label: '$(discard) 恢复默认 100%',
+        description: `当前 ${scaleToDisplayPercent(scale)}%`,
         run: () => this.resetPreviewScale(),
       },
       separator('启用范围 / Where it runs'),
