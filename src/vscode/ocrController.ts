@@ -66,7 +66,7 @@ export class OcrController implements vscode.Disposable {
   private async ensurePack(): Promise<boolean> {
     if (await this.pack.isInstalled()) return true;
     const choice = await vscode.window.showInformationMessage(
-      `截图识别是独立的本地可选组件，约 ${megabytes(OCR_PACK_BYTES)}。只在本机识别，不上传截图；是否现在下载？`,
+      `截图识别首次使用需下载约 ${megabytes(OCR_PACK_BYTES)} 本地模型（公式 + 中英文）。只在本机运行，截图不会上传；下载一次即可离线使用。`,
       { modal: true },
       '下载并启用',
     );

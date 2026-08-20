@@ -17,7 +17,7 @@
 
 - **开关预览** `Ctrl+Alt+M`（Mac：`Cmd+Alt+M`），关掉当前浮层 `Esc`
 - **控制面板** 点状态栏的 **Silk Math**：调大小、暂停、排除当前文件
-- **截图识别** 点状态栏的相机图标
+- **截图识别** 点状态栏的相机图标：智能识别公式和文字，模型按需下载、只在本机运行
 
 <p align="center">
   <img src="media/preview-definitions.png" alt="文档自己的宏、环境和颜色会一起显示。">
@@ -39,6 +39,6 @@ Your own macros, environments, colors, and tables show up too. Undefined command
 
 - **Toggle** with `Ctrl+Alt+M` (`Cmd+Alt+M` on Mac); dismiss with `Esc`
 - **Control panel**: click **Silk Math** in the status bar to resize, snooze, or exclude the current file
-- **Screenshot OCR**: click the camera icon
+- **Screenshot OCR**: click the camera icon to read formulas and nearby text; models download on first use and stay local
 
 MIT License · [LICENSE](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

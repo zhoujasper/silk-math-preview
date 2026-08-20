@@ -5,10 +5,12 @@
 // token 退避。这里改为 VS Code Webview 的本地资源 URI、可释放会话和进度协议。
 import * as ort from 'onnxruntime-web';
 
+import { computeLetterbox, shouldInvertMeanLuma } from './imageMath.js';
+
 const INPUT_SIZE = 384;
 const DECODER_START_TOKEN = 2;
 const EOS_TOKEN = 2;
-const MAX_TOKENS = 256;
+const MAX_TOKENS = 384;
 const REPEAT_LIMIT = 12;
 
 export interface FormulaAssetUrls {
@@ -106,6 +108,41 @@ async function fetchTokenizer(uri: string): Promise<PreparedTokenizer> {
   return prepareFormulaTokenizer(await response.json() as FormulaTokenizerJson);
 }
 
+function sourceSize(source: CanvasImageSource): { width: number; height: number } {
+  if (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) {
+    return { width: source.width, height: source.height };
+  }
+  if (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas) {
+    return { width: source.width, height: source.height };
+  }
+  if (typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap) {
+    return { width: source.width, height: source.height };
+  }
+  if (typeof HTMLImageElement !== 'undefined' && source instanceof HTMLImageElement) {
+    return { width: source.naturalWidth || source.width, height: source.naturalHeight || source.height };
+  }
+  return { width: INPUT_SIZE, height: INPUT_SIZE };
+}
+
+function invertImageData(data: ImageData): void {
+  const pixels = data.data;
+  for (let index = 0; index < pixels.length; index += 4) {
+    pixels[index] = 255 - (pixels[index] ?? 0);
+    pixels[index + 1] = 255 - (pixels[index + 1] ?? 0);
+    pixels[index + 2] = 255 - (pixels[index + 2] ?? 0);
+  }
+}
+
+function meanLuma(data: ImageData): number {
+  const pixels = data.data;
+  let sum = 0;
+  const count = Math.max(1, pixels.length / 4);
+  for (let index = 0; index < pixels.length; index += 4) {
+    sum += ((pixels[index] ?? 0) + (pixels[index + 1] ?? 0) + (pixels[index + 2] ?? 0)) / 3;
+  }
+  return sum / count;
+}
+
 function preprocessFormula(source: CanvasImageSource): InstanceType<typeof ort.Tensor> {
   const canvas = document.createElement('canvas');
   canvas.width = INPUT_SIZE;
@@ -114,7 +151,18 @@ function preprocessFormula(source: CanvasImageSource): InstanceType<typeof ort.T
   if (!context) throw new Error('当前 Webview 无法创建 2D Canvas。');
   context.fillStyle = '#fff';
   context.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
-  context.drawImage(source, 0, 0, INPUT_SIZE, INPUT_SIZE);
+  const size = sourceSize(source);
+  const box = computeLetterbox(size.width, size.height, INPUT_SIZE, 0.1);
+  context.drawImage(source, box.x, box.y, box.width, box.height);
+  const sampleX = Math.max(0, Math.floor(box.x));
+  const sampleY = Math.max(0, Math.floor(box.y));
+  const sampleWidth = Math.max(1, Math.min(INPUT_SIZE - sampleX, Math.floor(box.width)));
+  const sampleHeight = Math.max(1, Math.min(INPUT_SIZE - sampleY, Math.floor(box.height)));
+  const sample = context.getImageData(sampleX, sampleY, sampleWidth, sampleHeight);
+  if (shouldInvertMeanLuma(meanLuma(sample))) {
+    invertImageData(sample);
+    context.putImageData(sample, sampleX, sampleY);
+  }
 
   const pixels = context.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
   const plane = INPUT_SIZE * INPUT_SIZE;

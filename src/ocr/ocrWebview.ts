@@ -4,13 +4,24 @@ import * as ort from 'onnxruntime-web';
 import { FormulaEngine, type FormulaAssetUrls, type FormulaProgress } from './formulaEngine.js';
 import {
   clientPointToImage,
+  expandRect,
   normalizeImageSelection,
   selectionHasArea,
+  shouldInvertMeanLuma,
+  unionRects,
   type ImagePoint,
   type ImageRect,
 } from './imageMath.js';
+import {
+  cleanRecognizedLatex,
+  composeMixedLines,
+  lineShouldTryFormula,
+  prefersWholeFormula,
+  wrapLatex,
+  type MixedOcrLine,
+} from './ocrCompose.js';
 
-type OcrMode = 'formula' | 'text';
+type OcrMode = 'auto' | 'formula' | 'text';
 type PaddleOcrServiceInstance = import(
   'ppu-paddle-ocr/web',
   { with: { 'resolution-mode': 'import' } }
@@ -18,7 +29,6 @@ type PaddleOcrServiceInstance = import(
 
 export interface OcrWebviewConfig {
   readonly imageUri: string;
-  /** 指向本地按需包 `ort/` 的 Webview URI，必须以 `/` 结尾。 */
   readonly ortWasmBase: string;
   readonly formula: FormulaAssetUrls;
   readonly text: {
@@ -61,7 +71,6 @@ interface VsCodeWebviewApi {
 declare function acquireVsCodeApi(): VsCodeWebviewApi;
 
 declare global {
-  // 由扩展生成的内联 bootstrap 在本脚本执行前注入；只包含本地 webview URI。
   var __SILK_MATH_OCR__: OcrWebviewConfig | undefined;
 }
 
@@ -70,7 +79,6 @@ const injectedConfig = globalThis.__SILK_MATH_OCR__;
 if (!injectedConfig) throw new Error('截图识别面板缺少本地资源配置。');
 const config: OcrWebviewConfig = injectedConfig;
 
-// 不允许 ORT 回退到默认 CDN。所有模型和 runtime 文件都来自已校验的本地按需包。
 ort.env.wasm.wasmPaths = config.ortWasmBase;
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
@@ -79,37 +87,86 @@ document.body.innerHTML = `
   <style>
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
-    body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font: 13px/1.45 var(--vscode-font-family); }
-    main { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); }
-    .stage { min-width: 0; padding: 18px; display: grid; place-items: center; background: color-mix(in srgb, var(--vscode-editor-background) 93%, var(--vscode-foreground)); overflow: auto; }
-    .canvas-wrap { position: relative; width: 100%; display: grid; place-items: center; }
-    canvas { display: block; max-width: 100%; max-height: calc(100vh - 36px); width: auto; height: auto; cursor: crosshair; touch-action: none; box-shadow: 0 8px 30px rgb(0 0 0 / 20%); }
-    aside { padding: 20px 18px; border-left: 1px solid var(--vscode-panel-border); display: flex; flex-direction: column; gap: 16px; min-height: 100vh; }
-    h1 { font-size: 15px; line-height: 1.3; margin: 0; font-weight: 600; }
-    .hint, .status { color: var(--vscode-descriptionForeground); margin: 0; }
-    .mode { display: flex; gap: 4px; border-bottom: 1px solid var(--vscode-panel-border); }
-    button { border: 0; border-radius: 3px; padding: 7px 10px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; font: inherit; }
-    button:hover { background: var(--vscode-button-hoverBackground); }
-    button:disabled { opacity: .55; cursor: default; }
-    .tab { color: var(--vscode-foreground); background: transparent; border-radius: 0; border-bottom: 2px solid transparent; }
-    .tab[aria-selected="true"] { border-bottom-color: var(--vscode-focusBorder); }
-    .tab:hover { background: var(--vscode-toolbar-hoverBackground); }
-    .primary { width: 100%; padding-block: 8px; }
-    textarea { width: 100%; min-height: 128px; resize: vertical; border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; padding: 9px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font: 12px/1.5 var(--vscode-editor-font-family); }
-    textarea:focus, button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
-    .preview { min-height: 48px; padding: 10px 0; overflow: auto; color: var(--vscode-editor-foreground); }
-    .preview svg { max-width: 100%; height: auto; }
-    .actions { display: flex; gap: 8px; }
-    .actions button { flex: 1; }
-    .spacer { flex: 1; }
-    @media (max-width: 720px) {
-      main { grid-template-columns: 1fr; }
-      .stage { min-height: 48vh; }
-      aside { min-height: auto; border-left: 0; border-top: 1px solid var(--vscode-panel-border); }
-      canvas { max-height: 60vh; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      font: 12px/1.45 var(--vscode-font-family);
     }
-    @media (prefers-reduced-motion: no-preference) {
-      button { transition: background-color 100ms ease, opacity 100ms ease; }
+    main { min-height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
+    .stage {
+      min-width: 0; padding: 16px; display: grid; place-items: center;
+      background: color-mix(in srgb, var(--vscode-editor-background) 88%, #000);
+      overflow: auto;
+    }
+    .canvas-wrap { position: relative; max-width: 100%; }
+    canvas {
+      display: block; max-width: 100%; max-height: calc(100vh - 32px);
+      width: auto; height: auto; cursor: crosshair; touch-action: none;
+      border-radius: 8px; box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+    }
+    aside {
+      padding: 16px 16px 14px;
+      border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+      display: flex; flex-direction: column; gap: 12px;
+      background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+    }
+    .hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .title { font-size: 14px; font-weight: 600; margin: 0; }
+    .sub { margin: 3px 0 0; color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .badge {
+      flex: none; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+      background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip, .ghost, .primary {
+      font: inherit; cursor: pointer; border: 1px solid transparent; border-radius: 6px;
+      transition: background 120ms ease, transform 80ms ease, opacity 120ms ease;
+    }
+    .chip, .ghost {
+      color: var(--vscode-button-secondaryForeground);
+      background: var(--vscode-button-secondaryBackground);
+    }
+    .chip { height: 26px; padding: 0 10px; border-radius: 999px; font-size: 11px; }
+    .chip.on, .primary {
+      background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    }
+    .chip:hover, .ghost:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .chip.on:hover, .primary:hover { background: var(--vscode-button-hoverBackground); }
+    .chip:active, .ghost:active, .primary:active { transform: scale(.97); }
+    .primary { width: 100%; height: 32px; font-weight: 600; }
+    .ghost { height: 28px; padding: 0 10px; font-size: 11px; flex: 1; }
+    button:disabled { opacity: .45; cursor: default; transform: none; }
+    .status { margin: 0; color: var(--vscode-descriptionForeground); min-height: 2.6em; }
+    .bar { height: 3px; border-radius: 99px; background: var(--vscode-widget-border, transparent); overflow: hidden; }
+    .bar > span {
+      display: block; height: 100%; width: 0;
+      background: var(--vscode-progressBar-background, var(--vscode-button-background));
+      transition: width 160ms ease;
+    }
+    textarea {
+      width: 100%; min-height: 140px; resize: vertical; flex: 1;
+      border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+      border-radius: 8px; padding: 10px;
+      color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+      font: 12px/1.5 var(--vscode-editor-font-family);
+    }
+    .preview {
+      min-height: 56px; max-height: 160px; overflow: auto; padding: 10px;
+      border-radius: 8px;
+      background: var(--vscode-editorHoverWidget-background, transparent);
+      border: 1px solid var(--vscode-editorHoverWidget-border, transparent);
+    }
+    .preview svg { max-width: 100%; height: auto; }
+    .actions { display: flex; gap: 6px; }
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      .stage { min-height: 42vh; }
+      aside { border-left: 0; border-top: 1px solid var(--vscode-widget-border, transparent); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .chip, .ghost, .primary, .bar > span { transition: none; }
     }
   </style>
   <main>
@@ -117,17 +174,27 @@ document.body.innerHTML = `
       <div class="canvas-wrap"><canvas id="source" aria-label="拖动鼠标框选要识别的区域"></canvas></div>
     </section>
     <aside>
-      <div><h1>截图识别</h1><p class="hint">拖动框选精确区域；图片只在本机 Webview 内处理。</p></div>
-      <div class="mode" role="tablist" aria-label="识别类型">
-        <button class="tab" id="formula-mode" role="tab" aria-selected="true">公式</button>
-        <button class="tab" id="text-mode" role="tab" aria-selected="false">文字</button>
+      <div class="hdr">
+        <div>
+          <h1 class="title">截图识别</h1>
+          <p class="sub">框选公式或文字，结果可编辑后插入。</p>
+        </div>
+        <span class="badge">仅本机</span>
+      </div>
+      <div class="chips" role="tablist" aria-label="识别类型">
+        <button class="chip on" id="auto-mode" role="tab" aria-selected="true">智能</button>
+        <button class="chip" id="formula-mode" role="tab" aria-selected="false">公式</button>
+        <button class="chip" id="text-mode" role="tab" aria-selected="false">文字</button>
       </div>
       <button class="primary" id="recognize" disabled>识别选区</button>
+      <div class="bar" aria-hidden="true"><span id="progress"></span></div>
       <p class="status" id="status" role="status" aria-live="polite">正在读取截图…</p>
       <textarea id="result" aria-label="可编辑识别结果" spellcheck="false" placeholder="识别结果会显示在这里"></textarea>
       <div class="preview" id="preview" aria-label="公式预览"></div>
-      <div class="spacer"></div>
-      <div class="actions"><button id="copy" disabled>复制</button><button id="insert" disabled>插入光标处</button></div>
+      <div class="actions">
+        <button class="ghost" id="copy" disabled>复制</button>
+        <button class="ghost" id="insert" disabled>插入光标处</button>
+      </div>
     </aside>
   </main>`;
 
@@ -142,9 +209,11 @@ const maybeContext = canvas.getContext('2d', { willReadFrequently: true });
 if (!maybeContext) throw new Error('当前 Webview 无法创建截图 Canvas。');
 const context: CanvasRenderingContext2D = maybeContext;
 const recognizeButton = element<HTMLButtonElement>('recognize');
+const autoModeButton = element<HTMLButtonElement>('auto-mode');
 const formulaModeButton = element<HTMLButtonElement>('formula-mode');
 const textModeButton = element<HTMLButtonElement>('text-mode');
 const status = element<HTMLParagraphElement>('status');
+const progressBar = element<HTMLSpanElement>('progress');
 const result = element<HTMLTextAreaElement>('result');
 const preview = element<HTMLDivElement>('preview');
 const copyButton = element<HTMLButtonElement>('copy');
@@ -153,7 +222,7 @@ const insertButton = element<HTMLButtonElement>('insert');
 const sourceImage = new Image();
 let selection: ImageRect | undefined;
 let dragStart: ImagePoint | undefined;
-let mode: OcrMode = 'formula';
+let mode: OcrMode = 'auto';
 let busy = false;
 let formulaEngine: FormulaEngine | undefined;
 let textService: PaddleOcrServiceInstance | undefined;
@@ -171,12 +240,24 @@ function setStatus(message: string): void {
   status.textContent = message;
 }
 
+function setProgress(ratio: number): void {
+  progressBar.style.width = `${Math.max(0, Math.min(100, ratio * 100))}%`;
+}
+
 function setMode(next: OcrMode): void {
   mode = next;
+  autoModeButton.classList.toggle('on', next === 'auto');
+  formulaModeButton.classList.toggle('on', next === 'formula');
+  textModeButton.classList.toggle('on', next === 'text');
+  autoModeButton.setAttribute('aria-selected', String(next === 'auto'));
   formulaModeButton.setAttribute('aria-selected', String(next === 'formula'));
   textModeButton.setAttribute('aria-selected', String(next === 'text'));
-  preview.hidden = next !== 'formula';
-  setStatus(next === 'formula' ? '公式模式：输出 LaTeX。' : '文字模式：保留检测到的换行。');
+  preview.hidden = next === 'text';
+  setStatus(next === 'formula'
+    ? '公式模式：输出 LaTeX。'
+    : next === 'text'
+      ? '文字模式：保留换行。'
+      : '智能模式：公式转成 LaTeX，旁白文字一并保留。');
 }
 
 function redraw(): void {
@@ -184,11 +265,16 @@ function redraw(): void {
   context.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
   if (!selection || !selectionHasArea(selection)) return;
   context.save();
-  context.fillStyle = 'rgba(0, 122, 204, 0.12)';
-  context.strokeStyle = '#38a8ff';
+  context.fillStyle = 'rgba(0, 0, 0, 0.42)';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.clearRect(selection.x, selection.y, selection.width, selection.height);
+  context.drawImage(
+    sourceImage,
+    selection.x, selection.y, selection.width, selection.height,
+    selection.x, selection.y, selection.width, selection.height,
+  );
+  context.strokeStyle = '#8ab4f8';
   context.lineWidth = Math.max(2, canvas.width / Math.max(canvas.clientWidth, 1));
-  context.setLineDash([8, 5]);
-  context.fillRect(selection.x, selection.y, selection.width, selection.height);
   context.strokeRect(selection.x, selection.y, selection.width, selection.height);
   context.restore();
 }
@@ -200,6 +286,25 @@ function pointFromPointer(event: PointerEvent): ImagePoint {
     { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height },
     { width: canvas.width, height: canvas.height },
   );
+}
+
+function invertIfDark(target: HTMLCanvasElement): void {
+  const targetContext = target.getContext('2d', { willReadFrequently: true });
+  if (!targetContext) return;
+  const data = targetContext.getImageData(0, 0, target.width, target.height);
+  let sum = 0;
+  const pixels = data.data;
+  const count = Math.max(1, pixels.length / 4);
+  for (let index = 0; index < pixels.length; index += 4) {
+    sum += ((pixels[index] ?? 0) + (pixels[index + 1] ?? 0) + (pixels[index + 2] ?? 0)) / 3;
+  }
+  if (!shouldInvertMeanLuma(sum / count)) return;
+  for (let index = 0; index < pixels.length; index += 4) {
+    pixels[index] = 255 - (pixels[index] ?? 0);
+    pixels[index + 1] = 255 - (pixels[index + 1] ?? 0);
+    pixels[index + 2] = 255 - (pixels[index + 2] ?? 0);
+  }
+  targetContext.putImageData(data, 0, 0);
 }
 
 function cropSelection(): HTMLCanvasElement {
@@ -216,19 +321,28 @@ function cropSelection(): HTMLCanvasElement {
   cropContext.fillStyle = '#fff';
   cropContext.fillRect(0, 0, width, height);
   cropContext.drawImage(sourceImage, left, top, width, height, 0, 0, width, height);
+  invertIfDark(crop);
+  return crop;
+}
+
+function cropRect(source: HTMLCanvasElement, rect: ImageRect): HTMLCanvasElement {
+  const padded = expandRect(rect, 0.16, { width: source.width, height: source.height });
+  const crop = document.createElement('canvas');
+  crop.width = Math.max(1, Math.ceil(padded.width));
+  crop.height = Math.max(1, Math.ceil(padded.height));
+  const cropContext = crop.getContext('2d', { willReadFrequently: true });
+  if (!cropContext) throw new Error('无法创建行选区。');
+  cropContext.fillStyle = '#fff';
+  cropContext.fillRect(0, 0, crop.width, crop.height);
+  cropContext.drawImage(source, padded.x, padded.y, padded.width, padded.height, 0, 0, crop.width, crop.height);
   return crop;
 }
 
 function formulaProgress(progress: FormulaProgress): void {
   const stageName = progress.stage === 'models' ? '加载公式模型' : progress.stage === 'tokenizer' ? '加载词表' : '解析公式';
   setStatus(`${stageName} ${progress.completed}/${progress.total}`);
-  post({
-    type: 'progress',
-    stage: progress.stage,
-    message: stageName,
-    completed: progress.completed,
-    total: progress.total,
-  });
+  setProgress(progress.total > 0 ? progress.completed / progress.total : 0);
+  post({ type: 'progress', stage: progress.stage, message: stageName, completed: progress.completed, total: progress.total });
 }
 
 function getFormulaEngine(): FormulaEngine {
@@ -239,8 +353,8 @@ function getFormulaEngine(): FormulaEngine {
 async function getTextService(): Promise<PaddleOcrServiceInstance> {
   if (textService) return textService;
   setStatus('正在加载本地文字模型…');
+  setProgress(0.12);
   post({ type: 'progress', stage: 'text-models', message: '加载本地文字模型', completed: 0, total: 1 });
-  // Node16 项目下该包是纯 ESM；动态 import 同时让文字引擎保持真正的首次使用才初始化。
   const { PaddleOcrService } = await import('ppu-paddle-ocr/web');
   const candidate = new PaddleOcrService({
     model: {
@@ -250,12 +364,13 @@ async function getTextService(): Promise<PaddleOcrServiceInstance> {
     },
     processing: { engine: 'canvas-native' },
     debugging: { verbose: false, debug: false },
-    detection: { maxSideLength: 1280 },
+    detection: { maxSideLength: 1600, paddingHorizontal: 0.5, paddingVertical: 0.35 },
     session: { graphOptimizationLevel: 'all' },
   });
   try {
     await candidate.initialize();
     textService = candidate;
+    setProgress(1);
     post({ type: 'progress', stage: 'text-models', message: '文字模型已就绪', completed: 1, total: 1 });
     return candidate;
   } catch (error) {
@@ -270,47 +385,121 @@ function updateActionState(): void {
   insertButton.disabled = busy || !hasText;
 }
 
+function requestPreview(latex: string): void {
+  const body = cleanRecognizedLatex(latex);
+  if (!body || mode === 'text') {
+    preview.replaceChildren();
+    return;
+  }
+  post({ type: 'preview-request', latex: body });
+}
+
+async function recognizeFormula(crop: HTMLCanvasElement): Promise<string> {
+  const recognized = await getFormulaEngine().recognize(crop);
+  const latex = wrapLatex(recognized.latex);
+  post({
+    type: 'recognize-result',
+    mode: 'formula',
+    text: latex,
+    ok: recognized.ok,
+    usedWasmFallback: recognized.usedWasmFallback,
+  });
+  setStatus(recognized.ok ? '公式识别完成，请对照截图复核。' : '结果可能不完整，请缩小选区或改用智能模式。');
+  if (latex) requestPreview(latex);
+  return latex;
+}
+
+async function recognizeText(crop: HTMLCanvasElement): Promise<string> {
+  const service = await getTextService();
+  setStatus('正在识别文字…');
+  setProgress(0.55);
+  post({ type: 'progress', stage: 'text-inference', message: '识别文字' });
+  const recognized = await service.recognize(crop, { flatten: false, noCache: true, strategy: 'per-line' });
+  setProgress(1);
+  setStatus(`文字识别完成，平均置信度 ${Math.round(recognized.confidence * 100)}%。`);
+  post({
+    type: 'recognize-result',
+    mode: 'text',
+    text: recognized.text,
+    ok: recognized.text.trim().length > 0,
+    confidence: recognized.confidence,
+  });
+  return recognized.text;
+}
+
+async function recognizeAuto(crop: HTMLCanvasElement): Promise<string> {
+  setStatus('智能识别：同时看文字和公式…');
+  const [textResult, formulaResult] = await Promise.all([
+    getTextService().then((service) => service.recognize(crop, { flatten: false, noCache: true, strategy: 'per-box' })),
+    getFormulaEngine().recognize(crop),
+  ]);
+  const wholeLatex = cleanRecognizedLatex(formulaResult.latex);
+  if (prefersWholeFormula(textResult.text, wholeLatex, formulaResult.ok)) {
+    const wrapped = wrapLatex(wholeLatex);
+    setStatus('已按整段公式识别。');
+    requestPreview(wrapped);
+    post({ type: 'recognize-result', mode: 'auto', text: wrapped, ok: formulaResult.ok, usedWasmFallback: formulaResult.usedWasmFallback });
+    return wrapped;
+  }
+
+  const lines: MixedOcrLine[] = [];
+  let formulaLines = 0;
+  for (const [index, boxes] of textResult.lines.entries()) {
+    const text = boxes.map((box) => box.text).join(' ').trim();
+    if (!text) continue;
+    if (lineShouldTryFormula(text) && formulaLines < 8) {
+      const union = unionRects(boxes.map((box) => box.box));
+      if (union && selectionHasArea(union, 8)) {
+        setStatus(`正在识别第 ${index + 1} 行公式…`);
+        const lineCrop = cropRect(crop, union);
+        const recognized = await getFormulaEngine().recognize(lineCrop);
+        if (recognized.ok && cleanRecognizedLatex(recognized.latex)) {
+          formulaLines += 1;
+          lines.push({ text, latex: recognized.latex, useFormula: true });
+          continue;
+        }
+      }
+    }
+    lines.push({ text, useFormula: false });
+  }
+
+  const mixed = composeMixedLines(lines) || textResult.text || wrapLatex(wholeLatex);
+  const mathChunks = mixed.match(/\$[^$]+\$|\\\[[\s\S]*?\\\]/g);
+  if (mathChunks?.[0]) requestPreview(mathChunks[0]);
+  setStatus(formulaLines > 0 ? '智能识别完成：公式已转成 LaTeX，文字已保留。' : '智能识别完成：这段更像普通文字。');
+  post({
+    type: 'recognize-result',
+    mode: 'auto',
+    text: mixed,
+    ok: mixed.trim().length > 0,
+    confidence: textResult.confidence,
+    usedWasmFallback: formulaResult.usedWasmFallback,
+  });
+  return mixed;
+}
+
 async function recognizeSelection(): Promise<void> {
   if (busy) return;
   busy = true;
   recognizeButton.disabled = true;
   updateActionState();
   preview.replaceChildren();
+  setProgress(0.05);
   try {
     const crop = cropSelection();
-    if (mode === 'formula') {
-      const recognized = await getFormulaEngine().recognize(crop);
-      result.value = recognized.latex;
-      setStatus(recognized.ok ? '公式识别完成，请对照截图复核。' : '结果可能退化，请修改或缩小选区后重试。');
-      post({
-        type: 'recognize-result',
-        mode,
-        text: recognized.latex,
-        ok: recognized.ok,
-        usedWasmFallback: recognized.usedWasmFallback,
-      });
-      if (recognized.latex) post({ type: 'preview-request', latex: recognized.latex });
-    } else {
-      const service = await getTextService();
-      setStatus('正在识别文字…');
-      post({ type: 'progress', stage: 'text-inference', message: '识别文字' });
-      const recognized = await service.recognize(crop, { flatten: false, noCache: true, strategy: 'per-line' });
-      result.value = recognized.text;
-      setStatus(`文字识别完成，平均置信度 ${Math.round(recognized.confidence * 100)}%。`);
-      post({
-        type: 'recognize-result',
-        mode,
-        text: recognized.text,
-        ok: recognized.text.trim().length > 0,
-        confidence: recognized.confidence,
-      });
-    }
+    const text = mode === 'formula'
+      ? await recognizeFormula(crop)
+      : mode === 'text'
+        ? await recognizeText(crop)
+        : await recognizeAuto(crop);
+    result.value = text;
   } catch (error) {
     const message = errorMessage(error);
     setStatus(message);
     post({ type: 'error', message });
   } finally {
     busy = false;
+    setProgress(0);
     recognizeButton.disabled = !selection || !selectionHasArea(selection);
     updateActionState();
   }
@@ -353,12 +542,13 @@ function finishSelection(event: PointerEvent): void {
   dragStart = undefined;
   if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   recognizeButton.disabled = !selectionHasArea(selection);
-  setStatus(selectionHasArea(selection) ? '选区已就绪。' : '选区太小，请重新框选。');
+  setStatus(selectionHasArea(selection) ? '选区已就绪，点击识别。' : '选区太小，请重新框选。');
   redraw();
 }
 
 canvas.addEventListener('pointerup', finishSelection);
 canvas.addEventListener('pointercancel', finishSelection);
+autoModeButton.addEventListener('click', () => setMode('auto'));
 formulaModeButton.addEventListener('click', () => setMode('formula'));
 textModeButton.addEventListener('click', () => setMode('text'));
 recognizeButton.addEventListener('click', () => void recognizeSelection());
@@ -366,8 +556,8 @@ recognizeButton.addEventListener('click', () => void recognizeSelection());
 result.addEventListener('input', () => {
   updateActionState();
   if (editPreviewTimer !== undefined) window.clearTimeout(editPreviewTimer);
-  if (mode === 'formula' && result.value.trim()) {
-    editPreviewTimer = window.setTimeout(() => post({ type: 'preview-request', latex: result.value }), 160);
+  if (mode !== 'text' && result.value.trim()) {
+    editPreviewTimer = window.setTimeout(() => requestPreview(result.value), 160);
   }
 });
 
@@ -378,13 +568,9 @@ window.addEventListener('message', (event: MessageEvent<OcrHostToWebviewMessage>
   const message = event.data;
   if (message.type !== 'formula-preview') return;
   try {
-    if (message.error) {
-      preview.textContent = `预览失败：${message.error}`;
-    } else if (message.svg) {
-      sanitizeAndShowSvg(message.svg);
-    } else {
-      preview.replaceChildren();
-    }
+    if (message.error) preview.textContent = `预览失败：${message.error}`;
+    else if (message.svg) sanitizeAndShowSvg(message.svg);
+    else preview.replaceChildren();
   } catch (error) {
     preview.textContent = `预览失败：${errorMessage(error)}`;
   }
@@ -402,7 +588,7 @@ sourceImage.addEventListener('load', () => {
   selection = { x: 0, y: 0, width: canvas.width, height: canvas.height };
   recognizeButton.disabled = !selectionHasArea(selection);
   redraw();
-  setStatus('已默认选择整张截图；拖动可精确缩小范围。');
+  setStatus('已选中整张截图。拖动可缩小范围，然后识别。');
   post({ type: 'ready' });
 });
 sourceImage.addEventListener('error', () => {

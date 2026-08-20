@@ -60,3 +60,55 @@ export function selectionHasArea(selection: ImageRect, minimumSide = 4): boolean
   return selection.width >= minimumSide && selection.height >= minimumSide;
 }
 
+/** 把源图按比例放进正方形，四周留白；禁止拉伸，否则宽公式会变形。 */
+export function computeLetterbox(
+  sourceWidth: number,
+  sourceHeight: number,
+  destinationSize: number,
+  paddingRatio = 0.1,
+): ImageRect {
+  const size = Math.max(1, destinationSize);
+  const inner = size * Math.max(0, 1 - 2 * Math.min(0.4, Math.max(0, paddingRatio)));
+  const scale = Math.min(inner / Math.max(1, sourceWidth), inner / Math.max(1, sourceHeight));
+  const width = Math.max(1, sourceWidth * scale);
+  const height = Math.max(1, sourceHeight * scale);
+  return {
+    x: (size - width) / 2,
+    y: (size - height) / 2,
+    width,
+    height,
+  };
+}
+
+export function expandRect(rect: ImageRect, padRatio: number, bounds: ImageSize): ImageRect {
+  const padX = rect.width * Math.max(0, padRatio);
+  const padY = rect.height * Math.max(0, padRatio);
+  const x = clamp(rect.x - padX, 0, bounds.width);
+  const y = clamp(rect.y - padY, 0, bounds.height);
+  const right = clamp(rect.x + rect.width + padX, 0, bounds.width);
+  const bottom = clamp(rect.y + rect.height + padY, 0, bounds.height);
+  return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
+}
+
+export function unionRects(rects: readonly ImageRect[]): ImageRect | undefined {
+  if (rects.length === 0) return undefined;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const rect of rects) {
+    left = Math.min(left, rect.x);
+    top = Math.min(top, rect.y);
+    right = Math.max(right, rect.x + rect.width);
+    bottom = Math.max(bottom, rect.y + rect.height);
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/** 截图平均亮度低于此值视为深色主题，识别前反相成黑字白底。 */
+export const DARK_LUMA_THRESHOLD = 140;
+
+export function shouldInvertMeanLuma(mean0to255: number): boolean {
+  return Number.isFinite(mean0to255) && mean0to255 < DARK_LUMA_THRESHOLD;
+}
+
