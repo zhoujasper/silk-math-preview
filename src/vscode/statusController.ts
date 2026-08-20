@@ -13,7 +13,6 @@ export const MIN_SCALE = 0.5;
 export const MAX_SCALE = 3;
 export const DEFAULT_SCALE = 1.1;
 const SCALE_STEP = 0.05;
-const SCALE_GAUGE_CELLS = 10;
 
 interface MenuItem extends vscode.QuickPickItem {
   readonly run?: () => unknown;
@@ -35,17 +34,8 @@ function formatClock(time: number): string {
   return new Date(time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-/** 悬浮框里的命令链接；参数按 command URI 规范编码。 */
-function link(label: string, command: string, args?: unknown[], tooltip?: string): string {
-  const query = args ? `?${encodeURIComponent(JSON.stringify(args))}` : '';
-  const title = tooltip ? ` "${tooltip}"` : '';
-  return `[${label}](command:${command}${query}${title})`;
-}
-
 /**
- * 状态栏入口：左边一个截图图标直接进 OCR，右边的插件名承载悬浮设置面板。
- * 面板用可信 MarkdownString + command 链接实现，风格与 Copilot 的状态栏面板一致，
- * 不用把用户拽到顶部的命令面板。
+ * 状态栏入口：左边截图识别，右边 Silk Math 点击打开右侧设置卡片。
  */
 export class StatusController implements vscode.Disposable {
   private readonly captureItem: vscode.StatusBarItem;
@@ -67,9 +57,6 @@ export class StatusController implements vscode.Disposable {
 
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 24);
     this.item.name = 'Silk Math';
-    // VS Code 只给扩展开放了 MarkdownString tooltip 这一种状态栏浮层，没有 API 能用点击打开它，
-    // 所以浮层靠悬停出现；点击退回等价的列表菜单，至少不是一个点不动的死条目。
-    // 点击打开自绘的控制面板（webview view）：可常驻、可交互、编辑时实时刷新。
     this.item.command = 'silkMath.togglePanel';
 
     this.disposables.push(
@@ -150,12 +137,6 @@ export class StatusController implements vscode.Disposable {
     return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(raw)));
   }
 
-  /** 刻度条比单独一个百分数更容易看出当前档位。 */
-  private scaleGauge(scale: number): string {
-    const filled = Math.round(((scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE)) * SCALE_GAUGE_CELLS);
-    return '▰'.repeat(filled) + '▱'.repeat(Math.max(0, SCALE_GAUGE_CELLS - filled));
-  }
-
   private excludedFiles(): string[] {
     return this.context.workspaceState.get<string[]>(EXCLUDED_FILES_KEY, []);
   }
@@ -207,77 +188,22 @@ export class StatusController implements vscode.Disposable {
     if (this.isSnoozed()) this.item.text = '$(debug-pause) Silk Math';
     else if (!active) this.item.text = '$(circle-slash) Silk Math';
     else this.item.text = 'Silk Math';
-    this.item.tooltip = this.hoverPanel(document, active);
+    this.item.tooltip = this.hoverHint(document, active);
     this.item.show();
     this.captureItem.show();
     if (!vscode.workspace.getConfiguration('silkMath').get('ocr.enabled', true)) this.captureItem.hide();
     this.changeEmitter.fire();
   }
 
-  /** Copilot 式悬浮面板：状态一眼可见，常用开关就地可点。 */
-  private hoverPanel(document: vscode.TextDocument | undefined, active: boolean): vscode.MarkdownString {
-    const config = vscode.workspace.getConfiguration('silkMath', document?.uri);
-    const scale = this.previewScale(document?.uri);
-    const percent = Math.round(scale * 100);
-    const mark = (value: boolean): string => (value ? '$(check)' : '$(blank)');
+  /** 悬停只给一句提示；完整设置在点击弹出的卡片里。 */
+  private hoverHint(document: vscode.TextDocument | undefined, active: boolean): vscode.MarkdownString {
     const excluded = document !== undefined && this.isExcluded(document.uri);
-
-    const lines: string[] = [];
-    lines.push('**Silk Math** · 实时公式预览 / Live math preview');
-    lines.push('');
-    lines.push('<sub>悬停出现本面板，点击是等价的列表菜单。 / Hover shows this panel; click opens the list menu.</sub>');
-    lines.push('');
-    if (this.isSnoozed()) {
-      lines.push(`$(debug-pause) 已暂停到 **${formatClock(this.snoozeUntil)}** — ${link('立即恢复 / Resume', 'silkMath.snooze', [0])}`);
-    } else if (excluded) {
-      lines.push('$(circle-slash) 当前文件已排除 / Excluded for this file');
-    } else if (!active) {
-      lines.push('$(circle-slash) 当前文件类型未启用 / Not enabled for this file type');
-    } else {
-      lines.push('$(check) 预览已启用 / Preview is on');
-    }
-
-    lines.push('', '---', '', '**预览大小 / Preview size**', '');
-    lines.push([
-      link('$(remove)', 'silkMath.decreasePreviewScale', undefined, '缩小 5% / Smaller'),
-      `&nbsp; **${percent}%** &nbsp;`,
-      link('$(add)', 'silkMath.increasePreviewScale', undefined, '放大 5% / Larger'),
-      '&nbsp;',
-      link('$(discard)', 'silkMath.resetPreviewScale', undefined, `恢复默认 ${Math.round(DEFAULT_SCALE * 100)}% / Reset`),
-    ].join(' '));
-    lines.push('', `\`${this.scaleGauge(scale)}\` &nbsp; <sub>${Math.round(MIN_SCALE * 100)}% – ${Math.round(MAX_SCALE * 100)}%</sub>`);
-
-    lines.push('', '---', '', '**启用范围 / Where it runs**', '');
-    lines.push(`${mark(config.get('enableInLatex', true))} ${link('LaTeX / TeX', 'silkMath.toggleLanguage', ['enableInLatex'])}`);
-    lines.push('');
-    lines.push(`${mark(config.get('enableInMarkdown', true))} ${link('Markdown / MDX', 'silkMath.toggleLanguage', ['enableInMarkdown'])}`);
-    lines.push('');
-    lines.push(`${mark(config.get('enableInOtherFiles', false))} ${link('其他文件类型 / Other files', 'silkMath.toggleLanguage', ['enableInOtherFiles'])}`);
-
-    lines.push('', '---', '');
-    const actions: string[] = [];
-    if (document) {
-      actions.push(link(
-        excluded ? '$(check) 取消排除本文件' : '$(circle-slash) 排除本文件',
-        'silkMath.toggleExcludeFile',
-      ));
-    }
-    if (!this.isSnoozed()) {
-      for (const choice of SNOOZE_CHOICES) {
-        actions.push(link(`$(clock) 暂停 ${choice.label}`, 'silkMath.snooze', [choice.minutes]));
-      }
-    }
-    lines.push(actions.join(' &nbsp;·&nbsp; '));
-    lines.push('');
-    lines.push([
-      link('$(screen-full) 截图识别 / OCR', 'silkMath.ocr.capture'),
-      link('$(gear) 设置 / Settings', 'silkMath.openSettings'),
-      link('$(list-flat) 全部选项 / All options', 'silkMath.showMenu'),
-    ].join(' &nbsp;·&nbsp; '));
-
-    const markdown = new vscode.MarkdownString(lines.join('\n'), true);
+    let text = '点击打开 Silk Math 设置卡片 / Click to open settings';
+    if (this.isSnoozed()) text = `已暂停到 ${formatClock(this.snoozeUntil)} · 点击打开设置`;
+    else if (excluded) text = '当前文件已排除 · 点击打开设置';
+    else if (!active) text = '当前文件类型未启用 · 点击打开设置';
+    const markdown = new vscode.MarkdownString(text, true);
     markdown.isTrusted = true;
-    markdown.supportHtml = true;
     return markdown;
   }
 

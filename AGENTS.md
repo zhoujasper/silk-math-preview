@@ -1,5 +1,13 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-20 状态栏点击设置卡片（0.1.19）
+
+- 用户不要下方面板那种整条占位，要点击 Silk Math 出现 Copilot 那种小卡片。
+  扩展无法把 webview 锚在状态栏上方（`statusBar.entry.showTooltip` 只给核心用），
+  最接近且能自定义 UI/动画的是 **右侧辅助栏** 里一张紧凑卡片。
+- 关掉即 `retainContextWhenHidden: false`，浮层不重复渲染 SVG。Esc 在
+  `silkMath.flyoutVisible` 时收起卡片。
+
 ## 2026-08-20 详情页图片与开源仓库（0.1.18）
 
 - 详情页图片空白的真正原因不是 CSP（CSP 写着 `img-src https: data:`），而是

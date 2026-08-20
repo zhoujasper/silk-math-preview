@@ -34,12 +34,10 @@ export function activate(context: vscode.ExtensionContext): void {
     ocr,
     panel,
     preview.onDidRender((frame) => panel.update(frame)),
-    vscode.window.registerWebviewViewProvider(ControlPanelProvider.viewType, panel),
-    vscode.commands.registerCommand('silkMath.togglePanel', async () => {
-      // 再点一次收起：面板已经可见时直接关掉整个下方面板区域。
-      if (panel.visible) await vscode.commands.executeCommand('workbench.action.closePanel');
-      else await vscode.commands.executeCommand('silkMath.controlPanel.focus');
+    vscode.window.registerWebviewViewProvider(ControlPanelProvider.viewType, panel, {
+      webviewOptions: { retainContextWhenHidden: false },
     }),
+    vscode.commands.registerCommand('silkMath.togglePanel', () => panel.toggle()),
     vscode.commands.registerCommand('silkMath.togglePreview', () => {
       const enabled = preview.toggle();
       void vscode.window.showInformationMessage(`Silk Math 实时预览已${enabled ? '开启' : '暂停'}。`);

@@ -1,5 +1,10 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-20 状态栏点击设置卡片（0.1.19）
+
+- 底部 webview view 会铺满面板，不像 Copilot 浮层。改到 secondarySidebar 紧凑卡片。
+- 核心 API 没有“点击打开状态栏 hover”给扩展用。
+
 ## 2026-08-20 详情页图片与开源仓库（0.1.18）
 
 - 详情页 sanitizer 剥掉非 http/https 的 img src。相对路径在 GitHub README 能看，
