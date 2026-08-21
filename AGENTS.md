@@ -1,5 +1,574 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-21 GitHub 与 Marketplace 发布信息（0.1.67）
+
+- 作者 `Jasper Zhou`，主页 `https://zhoujasper.github.io`，仓库
+  `https://github.com/zhoujasper/silk-math-preview`。`package.json` 的
+  `publisher` 仍是 `silkmath`（Marketplace ID：`silkmath.silk-math-preview`）。
+  `private: false` 才能 `vsce publish`。发布步骤见 `docs/PUBLISH.md`。
+- README 末尾带作者主页和 GitHub 链接。详情页图片仍靠仓库 `media/*.png`，
+  vsce 不要 `--no-rewrite-relative-links`。
+
+## 2026-08-21 改回顶部 QuickPick（0.1.67）
+
+- 状态栏 Markdown hover 没法当场改勾选（内核 locked hover）。用户要求改回
+  之前顶部菜单：点 Silk Math → QuickPick，开关后菜单不关、勾选立刻变。
+  `item.command = silkMath.showMenu`。乐观 pending 立刻刷新菜单项。
+  不要 views / webview panel / 右侧栏。Esc 关掉菜单。
+- 流水线：19 files / 208 tests；覆盖率 stmts/branch/lines `93.52%/87.57%/95.88%`。
+  main bundle 125,463 B。cold p50/p95 `150.5/166.8 ms`，warm p50/p95 `16.6/30.1 ms`，
+  scanner p95 `0.99 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.67.vsix`，`1,196,438` bytes，SHA-256
+  `4E67069AD157F2EB90DD178BC4A32B03D148124C3E8A5E7CC70ACC30F30B294E`，15 个条目。
+
+## 2026-08-21 Copilot 活 DOM vs locked hover（0.1.66）
+
+- 对本机 `workbench.desktop.main.js` 核对 Copilot：`tooltip: { element: token =>
+  ChatStatusDashboard }`，`command: R6`（`{id:'statusBar.entry.showTooltip'}`
+  对象，`executeCommand` 里 `e===R6` 才 `this.hover.show(true)`）。勾选是同一张
+  Toggle 上 `checked=!checked`，`stop(event)`，从不换 tooltip。
+- 扩展公开 API 没有 HTMLElement tooltip，也拿不到 R6 对象。Markdown hover
+  点开后 `sticky:focus` → `isLocked`。`_createHover` 见 locked 直接 return，
+  随后 `ManagedHoverWidget.show` 把旧浮层 dispose。只改 tooltip 会拆掉卡片
+  却画不出新的；先清空再 `showHover` 时 activeElement 经常不在状态栏条目上，
+  旧卡片又被请回来。
+- 0.1.66：点选先写入 pending 新 markdown（拆掉 locked 旧浮层），再写一次
+  不同 revision（此时 isLocked 已空，zombie widget 会真正 showHover），然后
+  补几次 `showHover`。勾选用 ☑/☐，开/关写在 markdown.value 里。
+- 流水线：19 files / 208 tests；覆盖率 stmts/branch/lines `93.52%/87.57%/95.88%`。
+  main bundle 130,981 B。cold p50/p95 `144.2/154.5 ms`，warm p50/p95 `14.9/21.7 ms`，
+  scanner p95 `0.75 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.66.vsix`，`1,198,013` bytes，SHA-256
+  `FFEE6434B9ADEA9019A927201A617B3D20B285B07EF040FDD474AB1DD5777E47`，15 个条目。
+
+## 2026-08-21 闪了但勾选不变（0.1.65）
+
+- 0.1.64 点选会闪（命令跑了、hover 拆掉重开），勾选还是旧的：`update()` 的
+  Promise 结束时 `getConfiguration()` 经常仍返回旧值，重开卡片按旧快照画。
+  Copilot 内核卡片是活的 HTMLElement；我们只能拆掉再 showHover，所以必须用
+  内存里的乐观状态画新勾选，配置稍后落盘。`get()` 对上了再清 pending。
+- 流水线：19 files / 208 tests；覆盖率 stmts/branch/lines `93.52%/87.57%/95.88%`。
+  main bundle 130,804 B。cold p50/p95 `138.6/149.1 ms`，warm p50/p95 `15.9/21.5 ms`，
+  scanner p95 `0.92 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.65.vsix`，`1,197,788` bytes，SHA-256
+  `9BA32A92047211545E830A5468F5F7DD024D1F3CAB215532325E97B422D9F4C0`，15 个条目。
+
+## 2026-08-21 isTrusted 白名单静默吞点击（0.1.64）
+
+- 0.1.63 卡片能看见链接但点了没闪：opener `open()` 在 `allowCommands` 是数组时
+  `!allowCommands.includes(uri.path)` 直接 `return true`，不执行命令。
+  `{ enabledCommands }` 不是 `=== true`，command URI 的 path 对不上就吞掉。
+- `isTrusted` 必须是布尔 `true`。链接仍是 markdown `[text](command:)`，文字用前景色
+  span，推迟用次级按钮色，不要列表子弹、不要 HTML `<a href="command:">`。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.52%/87.57%/95.88%`。
+  main bundle 129,404 B。cold p50/p95 `134.7/146.7 ms`，warm p50/p95 `14.5/23.7 ms`，
+  scanner p95 `1.00 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.64.vsix`，`1,197,326` bytes，SHA-256
+  `05B57CA38CD5C7F6FA735ECF4D07E1E58C0F167C0345B5897CD7EEB121DDD135`，15 个条目。
+
+## 2026-08-21 command 链接被内核拆掉（0.1.63）
+
+- 点了没闪、也没反应：命令根本没跑。HTML `<table>` 里的 `<a href="command:">` 不是
+  markdown `link` token，ExtHost `MarkdownString.from` 只 walk lexer 的 link/image，
+  随后 `rewriteRenderedLinks` 在 `!isTrusted` 或空 href 时 `replaceWith(childNodes)`，
+  勾选只剩文字。Copilot Chat 自己的 tooltip 用 `[text](command:id)`。
+- 改成 markdown command 链接；`isTrusted = { enabledCommands: FLYOUT_COMMANDS }`；
+  toggle/snooze/exclude/settings 写入 package.json。点选后状态栏短暂 `$(sync)`，
+  再清 tooltip、写回、showHover 两次。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.50%/87.57%/95.87%`。
+  main bundle 128,950 B。cold p50/p95 `151.8/169.9 ms`，warm p50/p95 `14.9/21.2 ms`，
+  scanner p95 `0.84 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.63.vsix`，`1,197,033` bytes，SHA-256
+  `2C02446A235917F343251DF70137000ED658C0DB4E0EA76C4DC8D4ADA1349CF0`，15 个条目。
+
+## 2026-08-21 点选后立刻重开 hover（0.1.62）
+
+- 对本机 VS Code `workbench.desktop.main.js` 核对：点开的状态栏 hover 带
+  `sticky: focus` → `isLocked`。`_createHover` 见 locked 直接 return；
+  ManagedHoverWidget 再 dispose 旧浮层。`workbench.action.showHover` 只从
+  `getActiveElement()` 往父节点找 managed hover。`focusStatusBar` 只聚焦容器，
+  `lastFocusedEntry` 只在键盘左右切条目时写入，鼠标点击不会记。
+- 点选后：tooltip 置 `undefined` 让 hasContent=false、内核 dispose 并把焦点交回
+  条目上的 `<a>`，改 text 的零宽空格逼 ExtHost 真正 `$setEntry`，写入新 Markdown，
+  再 `showHover` 两次。不要 focusStatusBar。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.52%/87.48%/95.88%`。
+  main bundle 129,664 B。cold p50/p95 `147.6/155.8 ms`，warm p50/p95 `14.4/21.2 ms`，
+  scanner p95 `1.35 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.62.vsix`，`1,196,986` bytes，SHA-256
+  `0CD901EC67F171FBD96DE7BC392B85E551B4D7A28EF085D02677D5F9AF7F06FE`，15 个条目。
+
+## 2026-08-21 Copilot Chat VSIX：悬浮窗是内核 hover（0.1.61）
+
+- 拆开 `github.copilot-chat-0.48.1.vsix`：插件名 `copilot-chat`。状态栏那张大卡片
+  **不是插件画的**。插件用提议 API `chatStatusItem` 的
+  `window.createChatStatusItem` 只往内核卡片里塞「Codebase Semantic Index」和
+  「Session Sync」两行。自己的 `createStatusBarItem` 是 NES 捕获 / 网络调试 /
+  录制，tooltip 是 MarkdownString + command 链接。
+- 点 Copilot 图标弹出 monaco-hover：内核 `ChatStatusBarEntry` 的
+  `command: ShowTooltipCommand` + `tooltip: { element: HTMLElement }`。
+  扩展公开等价：`command = workbench.action.showHover` + 可信 MarkdownString。
+- 0.1.60 右侧辅助栏是错的。已撤掉 views。点 Silk Math 重新在图标正上方弹 hover。
+  点选后先把 tooltip 写成空（让 locked hover 标成已销毁），焦点仍留在条目上，
+  再写回新内容并 `showHover`。不要 `focusStatusBar`。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.52%/87.48%/95.88%`。
+  main bundle 129,532 B。cold p50/p95 `143.6/160.8 ms`，warm p50/p95 `14.9/26.3 ms`，
+  scanner p95 `0.64 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.61.vsix`，`1,196,864` bytes，SHA-256
+  `4639865AB7AFAE5AE364171A347CC7B87CC7B905FD98EBFA7E1400C4A7462895`，15 个条目。
+
+## 2026-08-21 Copilot 源码对照：点选立刻刷新（0.1.60）
+
+- Copilot 状态栏卡片不在 Copilot 扩展里，在 VS Code 内核
+  `ChatStatusDashboard`：`tooltip: { element: token => HTMLElement }` +
+  `command: ShowTooltipCommand`（对象身份 `{ id: 'statusBar.entry.showTooltip' }`）。
+  勾选是工作台 `Checkbox`，点了改同一个 DOM。扩展公开 API 只有
+  `StatusBarItem.tooltip: MarkdownString`，构造不出那个 command 对象。
+- 点开的 Markdown hover 是 `sticky: focus` → `isLocked`。改 tooltip 时
+  `ManagedHoverWidget.showHover` 对锁住的浮层直接 `return undefined`，然后把旧
+  hover dispose 掉；`workbench.action.focusStatusBar` 焦点在状态栏容器上，
+  `showHover` 往父节点找，找不到我们的条目。所以看起来点不动，关了再开才变。
+- 扩展能原地刷新的 DOM 只有 webview。`createWebviewPanel` 会多一个编辑器标签
+  （0.1.56 已否）。现在点 Silk Math 打开右侧辅助栏里自己画的卡片：真实
+  checkbox/button，postMessage 立刻重绘。Esc 关掉。不要下方面板，不要新标签。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.51%/87.53%/95.87%`。
+  main bundle 134,949 B。cold p50/p95 `140.5/153.9 ms`，warm p50/p95 `14.3/25.9 ms`，
+  scanner p95 `0.89 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.60.vsix`，`1,198,712` bytes，SHA-256
+  `0F0E3DED1AAEB384F558E84D0B4E662C595C71DAC0B4E35B98C29ECCC09E0C3A`，15 个条目。
+
+## 2026-08-21 推迟按钮和点选刷新（0.1.59）
+
+- 推迟用主题次级按钮色 + 2px 圆角的文字芯片，不要 SVG 画字（又糊又丑）。
+  − / + / 重置只保留前景色文字。勾选用 `$(check)` / `$(primitive-square)`。
+- 点完先把 tooltip 冲空等 IPC，拆掉 sticky hover，再写回新 Markdown 并
+  `focusStatusBar` + `showHover`。仍然不是 Copilot 的 HTMLElement 原地改 DOM，
+  但卡片还是状态栏浮层，不开新标签。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.52%/87.43%/95.88%`。
+  main bundle 129,508 B。cold p50/p95 `141.1/158.6 ms`，warm p50/p95 `14.7/26.6 ms`，
+  scanner p95 `1.12 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.59.vsix`，`1,196,303` bytes，SHA-256
+  `9F47551C6F62A0C22ABDF2D69E0D11E903D7752DF04BFB0075CBA151E2890304`，14 个条目。
+
+## 2026-08-21 点 Silk Math 不再开编辑器标签（0.1.58）
+
+- Copilot 状态栏卡片是内核 `ShowTooltipCommand` + HTMLElement hover，不会新建标签。
+  0.1.56 用 `createWebviewPanel` 能原地刷新，但会多一个 Silk Math 编辑器页。
+  改回 `command = workbench.action.showHover` + Markdown 卡片，钉在条目上方。
+- 推迟按钮是 SVG 小芯片：细描边、浅底、rx=3。文案跟 `vscode.env.language`：
+  `zh*` 中文，其余英文。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.56%/87.23%/95.91%`。
+  main bundle 129,470 B。cold p50/p95 `138.7/150.7 ms`，warm p50/p95 `14.8/23.5 ms`，
+  scanner p95 `0.85 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.58.vsix`，`1,196,393` bytes，SHA-256
+  `62D506B35CFB8BA7CDB1D475E6A56E426688212D2BCF1B8519090600A35A3447`，14 个条目。
+
+## 2026-08-21 Jupyter 多行公式下半截被裁（0.1.57）
+
+- notebook 单元格 `overflow` 会裁掉绝对定位 decoration，下一格还会盖住。
+  z-index 救不了。用户要预览在公式下方，不能再翻到 above 去盖住源码。
+  在锚点行加隐形 `after` 把行盒撑到「行高 + 间隙 + 预览高度」，格子跟着变高，
+  浮层整块留在当前格里。notebook 不再按半格高度截断预览。
+- 流水线：19 files / 207 tests；覆盖率 stmts/branch/lines `93.48%/87.55%/95.85%`。
+  main bundle 133,527 B。cold p50/p95 `131.3/163.6 ms`，warm p50/p95 `13.2/23.0 ms`，
+  scanner p95 `1.15 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.57.vsix`，`1,197,511` bytes，SHA-256
+  `BCC493454A8FB67358534BB5AFAA68B3C6613E61A3079DD885D4D9DF78A91B64`，14 个条目。
+
+## 2026-08-21 自绘 webview 卡片，勾选立刻变（0.1.56）
+
+- Copilot 状态栏卡片是内核 `tooltip: HTMLElement` + `ShowTooltipCommand`，点勾选改
+  同一个 DOM。扩展的 Markdown hover 点开后 sticky，改 tooltip 不会重绘。0.1.53–0.1.55
+  都卡在这里。改成点 Silk Math 打开我们自己的 webview 卡片，勾选走 postMessage，
+  立刻改 DOM。点卡片外或 Esc 关掉。
+- 勾选：空心方框 + 前景色对勾，flex 和文字对齐，不要蓝底。右上角齿轮进设置。
+  去掉「预览已启用」和底部设置。推迟是次级按钮 + 说明。底部按钮排除/取消排除。
+  卡片 280px，钉在编辑区右下（状态栏上头）。
+- 流水线：19 files / 205 tests；覆盖率 stmts/branch/lines `93.46%/87.55%/95.84%`。
+  main bundle 132,841 B。cold p50/p95 `134.9/143.5 ms`，warm p50/p95 `14.5/20.5 ms`，
+  scanner p95 `0.97 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.56.vsix`，`1,197,170` bytes，SHA-256
+  `BE09C8782E895C711E9C36194EAAD00EC598BB477C40750C7E88A607E774B340`，14 个条目。
+
+## 2026-08-21 勾选立刻刷新、推迟并排、上下留白（0.1.55）
+
+- Copilot 点勾选是改同一个 HTMLElement。扩展 Markdown hover 点开后 sticky，
+  `showHover` 在已有 widget 时是空操作。更糟的是 ExtHost `setTimeout(0)` 会把
+  「tooltip=undefined」和随后的 `refresh()` 合成一次，锁住的浮层一直显示旧内容。
+  勾选后先暂停 refresh，单独把 tooltip 冲空并等 IPC，再写回新内容，
+  `focusStatusBar` + `showHover` 钉回 Silk Math 上头。
+- 卡片 360px。两个推迟同一行左右排。整张卡一张 HTML 表，去掉顶部空段，
+  底部 14px 占位。
+- 流水线：19 files / 204 tests；覆盖率 stmts/branch/lines `93.58%/87.37%/95.93%`。
+  main bundle 129,330 B。cold p50/p95 `142.3/152.5 ms`，warm p50/p95 `14.2/20.6 ms`，
+  scanner p95 `0.88 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.55.vsix`，`1,195,617` bytes，SHA-256
+  `12D70E0C6BA13E38CB65E68F6A6CF0CBFA12E088A2C8272DB559185DC4A84CCB`，14 个条目。
+
+## 2026-08-21 状态栏卡片加宽、次级按钮、点了立刻刷新（0.1.54）
+
+- 工作台把点开的 hover 锁成 sticky：`ManagedHoverWidget.update` 调 `showHover`
+  时若 `isLocked` 就返回 undefined，再 `oldHoverWidget.dispose()`。扩展改
+  tooltip 不会原地重绘，看起来像没点到。勾选后先把 tooltip 清空冲掉锁住的
+  hover，再写回新 Markdown，`focusStatusBar` + `showHover` 钉在 Silk Math 上头。
+- 卡片用 400px 占位图撑开。勾选是 18px 圆角方框 SVG（不是蓝色 `pass-filled`）。
+  按钮用允许的 span style：`button-secondaryForeground/Background` +
+  `border-radius:4px`，标签强制 `--vscode-foreground`，不再继承链接蓝。
+- 流水线：19 files / 204 tests；覆盖率 stmts/branch/lines `93.61%/87.37%/95.98%`。
+  main bundle 129,335 B。cold p50/p95 `139.0/159.1 ms`，warm p50/p95 `14.7/22.2 ms`，
+  scanner p95 `0.96 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.54.vsix`，`1,195,440` bytes，SHA-256
+  `421AF6F66543099BA8A3C13EEDE965AF54DAF7DE484C6D6867F989C8DEB88E86`，14 个条目。
+
+## 2026-08-21 状态栏卡片 Copilot 勾选布局（0.1.53）
+
+- 启用范围不要蓝色超链接。勾选框单独是 command 链接，标签是普通文字。
+  点勾选框后用 revision 刷新 tooltip，工作台 hover 原地重绘。
+- 暂停做成 Copilot 那种「推迟 + 说明」。
+- 流水线：19 files / 203 tests；覆盖率 stmts/branch/lines `93.55%/87.61%/95.94%`。
+  main bundle 126,249 B。cold p50/p95 `142.6/146.8 ms`，warm p50/p95 `14.5/23.5 ms`，
+  scanner p95 `0.69 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.53.vsix`，`1,194,549` bytes，SHA-256
+  `581F765198473009A3F6F71D348C786845009C85484F664E28087C76C63E7353`，14 个条目。
+
+## 2026-08-21 表格文本格光标渲染成源码（0.1.52）
+
+- Markdown 表里判断文本/数学不能从整张表开头数 `$`。上一格 `` `$` `` 或
+  `$|\nabla u|$` 后面的单元格会被误判成数学模式，caret 不包 `$...$`，
+  `\text{}` 再把 `\class{silk-math-caret}{\rule...}` 转义成原文。
+  改为只看当前单元格；wrapCell 也会给文本格里的 caret 补上 `$...$`。
+- 流水线：19 files / 203 tests；覆盖率 stmts/branch/lines `93.57%/87.70%/95.93%`。
+  main bundle 126,187 B。cold p50/p95 `135.5/157.1 ms`，warm p50/p95 `13.7/22.3 ms`，
+  scanner p95 `0.91 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.52.vsix`，`1,194,416` bytes，SHA-256
+  `B1187A35E7D9D6DD7F1B509BFE744176DB641071750A809892C287639EB1BA18`，14 个条目。
+
+## 2026-08-21 滚动条拖动不再关掉预览（0.1.51）
+
+- 点滚动条会把光标落到浮层盖住的源码行，selection 当成离开公式就把预览清了。
+  鼠标选区落在浮层占用的行上时保持当前预览。
+- 滚动条用 `scrollbar-width: thin` + 透明轨道，不要系统那种宽条带底色。
+- 流水线：19 files / 202 tests；覆盖率 stmts/branch/lines `94.60%/88.90%/97.10%`。
+  main bundle 124,661 B。cold p50/p95 `135.5/152.1 ms`，warm p50/p95 `13.7/21.5 ms`，
+  scanner p95 `0.80 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.51.vsix`，`1,193,950` bytes，SHA-256
+  `3A84A46BC879B104324A94AC41111DB13DE27ADC9026D247940628143B18F4F0`，14 个条目。
+
+## 2026-08-21 预览对准公式正下方居中（0.1.50）
+
+- Monaco 里 decoration 的 `position:absolute` 包含块是整行，`left:0` 会贴行首。
+  要用公式起止列算出中心，预览以中心向两侧变宽；超出视口宽/高则滚动。
+- 流水线：19 files / 200 tests；覆盖率 stmts/branch/lines `94.57%/88.75%/97.08%`。
+  main bundle 123,489 B。cold p50/p95 `142.7/149.0 ms`，warm p50/p95 `13.9/23.0 ms`，
+  scanner p95 `1.14 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.50.vsix`，`1,193,611` bytes，SHA-256
+  `D35B694956A69B26EE6EE752F6CD61246852F910EB20ED63FBA1557D2FA121C4`，14 个条目。
+
+## 2026-08-21 点击 Silk Math 弹出 Copilot 同款状态栏卡片（0.1.49）
+
+- Copilot 的点击浮层**不是扩展 API**。它是 VS Code 内核
+  `ChatStatusDashboard`：`statusbarService.addEntry({ tooltip: HTMLElement, command: ShowTooltipCommand })`。
+  `ShowTooltipCommand` 是 `{ id: 'statusBar.entry.showTooltip' }` 的**对象引用**，
+  `command === ShowTooltipCommand` 才调用 `hover.show(true)`。扩展 IPC 过去的
+  `{ id: 'statusBar.entry.showTooltip' }` 对不上，会走 `executeCommand` 然后报命令不存在。
+- 公开等价路径：状态栏条目 `tooltip = MarkdownString`（trusted command 链接），
+  `command = 'workbench.action.showHover'`。点击时焦点在状态栏条目上，工作台立刻弹出
+  **钉在该条目正上方**的 hover，和 Copilot 同一套 HoverService。不经过扩展宿主，
+  所以不会因为点状态栏丢掉编辑器焦点而画不出来。
+- 上一版用 editor decoration + `data:` SVG 画卡片：没有可见编辑器、Jupyter 裁切、
+  选区事件、`contentIconPath` 都可能让点击完全没反应。已拆掉。
+- 命令面板里的「打开设置卡片」仍打开 QuickPick（那时焦点不在状态栏）。
+- 流水线：19 files / 199 tests；覆盖率 stmts/branch/lines `94.57%/88.88%/97.11%`。
+  main bundle 122,566 B。cold p50/p95 `140.2/154.4 ms`，warm p50/p95 `14.0/20.7 ms`，
+  scanner p95 `0.75 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.49.vsix`，`1,193,251` bytes，SHA-256
+  `4D7D378BC7DCB6F88575502DBFF5A006D1297F1970568EDE23BACE5A2267436D`，14 个条目。
+
+## 2026-08-21 列竖线画不出来（0.1.48）
+
+- `{cc|c}` 的 `|` MathJax 画成零宽度 `<line>`。VS Code decoration 把 SVG 当图片画，
+  竖线 bbox 宽度为 0，整根丢掉；横线够长所以还在。改成有宽度的细矩形。
+- 流水线：19 files / 199 tests；覆盖率 stmts/branch/lines `94.57%/88.88%/97.11%`。
+  main bundle 129,066 B。cold p50/p95 `130.8/147.7 ms`，warm p50/p95 `14.1/22.7 ms`，
+  scanner p95 `0.96 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.48.vsix`，`1,195,020` bytes，SHA-256
+  `8F9460B48065F9D85A313B7FCC85E28D5D02BD489B1848D25A8861876CC75A9B`，14 个条目。
+
+## 2026-08-21 带框表格渲染成白色色块（0.1.47）
+
+- MathJax 用铺满表格的 `rect[data-frame]` 画外框，stylesheet 里是 `fill:none;stroke-width:70px`。
+  独立 SVG 剥掉外部 CSS 后，`svg{fill:currentColor}` 把整块矩形涂满，深色主题里就是一坨白。
+  只在 `{|c|c|c|}` / `\hline` 这类有框线的表上出现。
+- 流水线：19 files / 198 tests；覆盖率 stmts/branch/lines `94.57%/88.88%/97.11%`。
+  main bundle 129,066 B。cold p50/p95 `134.7/151.7 ms`，warm p50/p95 `13.6/20.9 ms`，
+  scanner p95 `1.04 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.47.vsix`，`1,194,787` bytes，SHA-256
+  `C9CAAFAED650A8D2D5EAC8D448D85B64EF1B1B4CE6B5C594BC7EF889D7BD501E`，14 个条目。
+
+## 2026-08-21 自定义环境套 equation 无法预览（0.1.46）
+
+- `.cls` 里 `\newenvironment{eqmath}{\begin{equation}}{\end{equation}}` 在预览数学模式里
+  会报 “Erroneous nesting of equation structures”。prelude 把 equation 去壳、align→aligned。
+- 流水线：19 files / 196 tests；覆盖率 stmts/branch/lines `94.57%/88.88%/97.11%`。
+  main bundle 129,066 B。cold p50/p95 `133.8/154.1 ms`，warm p50/p95 `14.6/23.7 ms`，
+  scanner p95 `0.94 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.46.vsix`，`1,194,570` bytes，SHA-256
+  `003A71D2988091C6E2CA0B28B7FE71AE7D0A13EB7F0C5EF6C175AC03712ABF8F`，14 个条目。
+
+## 2026-08-21 Markdown 行内代码点反引号也预览（0.1.45）
+
+- `` `$not math$` `` 整段都是公式：光标在两侧反引号上也要命中。
+  `` `see $x$` `` 这种夹着别的字的，仍然只命中 `$x$`。
+- Jupyter 样例原先写「不是公式」，已改成「也应预览」。
+- 流水线：19 files / 193 tests；覆盖率 stmts/branch/lines `94.56%/88.86%/97.10%`。
+  main bundle 128,892 B。cold p50/p95 `135.9/144.6 ms`（本轮冷门数字低于 180 ms，
+  仍不宣称稳定达标），warm p50/p95 `13.7/19.0 ms`，scanner p95 `0.77 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.45.vsix`，`1,194,588` bytes，SHA-256
+  `E4EBC9A9F18CF4CAB0FC80A52F1C6F3D15FBD085E7B8D81DDCB071ED48DEE2F2`，14 个条目。
+
+## 2026-08-21 Markdown 代码里的公式也预览（0.1.44）
+
+- 行内 `` `$...$` `` 和 fence 里的公式要扫描。`ignoredRanges` 仍包含代码，
+  以免 `\newcommand` 从代码块里进定义。
+- 配对和恢复不能跨出当前 code span / fence。
+- 流水线：19 files / 192 tests；覆盖率 stmts/branch/lines `94.51%/88.80%/97.08%`。
+  main bundle 128,411 B。cold p50/p95 `145.0/165.9 ms`（冷门未达 180 ms 目标），warm p50/p95
+  `15.7/21.6 ms`，scanner p95 `0.74 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.44.vsix`，`1,194,383` bytes，SHA-256
+  `3BF3B0729708C47E43834B04A85126970B870F2AD3B11D1B796F6D95C4680167`，14 个条目。
+
+## 2026-08-21 Markdown 表格框线（0.1.43）
+
+- GFM 预览用 `|l|c|r|` + 每行 `\hline`，否则 MathJax array 没有框。
+- 流水线：19 files / 191 tests；覆盖率 stmts/branch/lines `94.64%/88.78%/97.26%`。
+  main bundle 127,557 B。cold p50/p95 `130.7/146.2 ms`，warm p50/p95 `13.4/20.9 ms`，
+  scanner p95 `0.58 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.43.vsix`，`1,194,035` bytes，SHA-256
+  `362C6C7C05B2B1E9A93F1C00FE4E29E10ED27AC1B8D0F12869A92E1A1F36D7AD`，14 个条目。
+
+## 2026-08-21 更新 fixtures 与全量扫掠
+
+- `test/fixtures/` 与当前行为对齐：预览在公式下方往右、GFM 表内 `|`、纯定义默认跳过。
+- `test/fixtureSweep.test.ts` 对 .tex/.md/.txt/.ipynb 每个公式区域跑 MathJax。
+  TikZ 不是数学环境，不要指望 scanner 扫到它。自定义环境用 aligned，不要套 equation。
+
+## 2026-08-21 GFM 表内公式竖线（0.1.42）
+
+- 拆 Markdown 表行时，`$...$` / `\(...\)` / `\[...\]` 里的 `|` 不是列分隔。
+  否则 `$\int |\nabla u|^2$` 会被切成 `$\int` 和 `\nabla u|^2$`，MathJax 报
+  math mode not terminated。
+- 流水线：18 files / 186 tests；覆盖率 stmts/branch/lines `93.13%/87.42%/95.73%`。
+  main bundle 127,463 B。cold p50/p95 `131.5/140.7 ms`，warm p50/p95 `13.6/22.2 ms`，
+  scanner p95 `0.74 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.42.vsix`，`1,193,957` bytes，SHA-256
+  `C1677153BFD1070168413285FB6708A76F457E4A66309B708F65BD1DFC52AE06`，14 个条目。
+
+## 2026-08-21 预览从公式起点往右排（0.1.41）
+
+- decoration range 必须从公式列开始，不能从 `lineAt().range.start`（行首）。
+  否则同一行靠右的 `$...$` 预览会画在行左边。
+- 超出右缘用负 `left` 往左推；比视口还宽则 `overflow-x: auto`。
+- 流水线：18 files / 184 tests；覆盖率 stmts/branch/lines `93.67%/87.62%/96.42%`。
+  main bundle 126,947 B。cold p50/p95 `132.2/140.4 ms`，warm p50/p95 `14.5/24.3 ms`，
+  scanner p95 `0.86 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.41.vsix`，`1,193,720` bytes，SHA-256
+  `0095D8947AFFD0F57A6FD15FF64FD62E3A88F0A955C764A90C8718AD3B2CE38C`，14 个条目。
+
+## 2026-08-21 预览一律在公式下方（0.1.40）
+
+- 不要再按单元格剩余高度把 below 改成 above。用户要浮层在公式下面。
+- `silkMath.previewPosition` 才是方向开关，默认 below。
+- 流水线：18 files / 180 tests；覆盖率 stmts/branch/lines `93.63%/87.74%/96.42%`。
+  main bundle 125,185 B。cold p50/p95 `136.6/148.5 ms`，warm p50/p95 `14.6/22.7 ms`，
+  scanner p95 `0.59 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.40.vsix`，`1,193,070` bytes，SHA-256
+  `9EE14EEE9D8E9337951E5338E0A31283B0F26FCAA2563F1C96C5AA6756C8F124`，14 个条目。
+
+## 2026-08-21 状态栏不要 Silk Math 左边的图标（0.1.39）
+
+- 条目文案只能是 `Silk Math`，不要 `$(chevron-up)` / `$(add)` / 齿轮。
+- 点击后也不要在左边展开 − % + 齿轮；控件放卡片和 hover。
+- 流水线：18 files / 183 tests；覆盖率 stmts/branch/lines `93.68%/87.71%/96.44%`。
+  main bundle 125,558 B。cold p50/p95 `137.4/152.3 ms`，warm p50/p95 `13.8/20.0 ms`，
+  scanner p95 `0.55 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.39.vsix`，`1,193,106` bytes，SHA-256
+  `1F49EBA059E5EE62D873179BC88EE11F4088A0110ED486F1D56B44DA4A124444`，14 个条目。
+
+## 2026-08-21 Jupyter 设置卡片跑到左上角（0.1.38）
+
+- 不能锚在 `activeTextEditor`（光标所在格往往在窗口上半截）。要选
+  `notebook.visibleRanges` 最后一格。
+- 单元格文档很短，`bottom: 8px; right: 16px` 相对这一格就能落在右下角。
+  普通长文件仍用最后可见行 + `translateY(-100%)`，不能用 bottom。
+- 流水线：18 files / 183 tests；覆盖率 stmts/branch/lines `93.68%/87.71%/96.44%`。
+  main bundle 126,903 B。cold p50/p95 `136.4/156.3 ms`，warm p50/p95 `14.8/23.6 ms`，
+  scanner p95 `1.14 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.38.vsix`，`1,193,307` bytes，SHA-256
+  `7D402EFC4F56591B5197275146E09C50280CD2968BA943F03B9E0A389D32097E`，14 个条目。
+
+## 2026-08-21 纯定义公式不报空渲染（0.1.37）
+
+- `$ \def\A{\mathbf{A}} $` 对 MathJax 是成功但无图元。不要报“渲染结果为空”。
+- 默认跳过；`silkMath.previewDefinitions` 打开后在声明后补 `\A` / `\norm{x}` 再画。
+- 流水线：18 files / 183 tests；覆盖率 stmts/branch/lines `93.67%/87.68%/96.44%`。
+  main bundle 125,983 B。cold p50/p95 `139.9/147.3 ms`，warm p50/p95 `15.4/22.5 ms`，
+  scanner p95 `0.66 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.37.vsix`，`1,193,008` bytes，SHA-256
+  `629EA94BB17D15ED1F83F433972778CC3E5D19AB3DE41749912E584838E3370A`，14 个条目。
+
+## 2026-08-21 人工系统预览样例（test/fixtures）
+
+- 视觉回归用 `test/fixtures/`，不要和 `test/*.test.ts` 混在一起。
+- `.cls` 的 `question`/`solution` 必须是文本环境；数学宏放 `.sty`，主文件
+  `\documentclass{silkmath-fixture}` 才能测到「类文件 + 宏包 + 使用处」。
+- Jupyter 第一格写 `$\def\A{...}$`，后面格子用 `\A`；代码格不提供定义。
+
+## 2026-08-21 详情页与 GitHub 显示图标（0.1.36）
+
+- README 顶部放 `media/icon.png`（约 96px）。同一文件同时给商店详情页和 GitHub。
+- `package.json` 的 `icon` 仍是商店卡片用的 256px 图标；README 里要再写一张，否则介绍正文没有 logo。
+- 流水线：17 files / 179 tests；覆盖率 stmts/branch/lines `93.81%/88.08%/96.37%`。
+  main bundle 123,732 B。cold p50/p95 `138.8/152.6 ms`，warm p50/p95 `14.0/23.1 ms`，
+  scanner p95 `0.89 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.36.vsix`，`1,192,175` bytes，SHA-256
+  `86DC6778733995E0336FB2F6667320F34F9D6ECE6EE8FFCD59F96551A95C2E60`，14 个条目。
+
+## 2026-08-21 详情页默认英文、可切换、示意图缩小（0.1.35）
+
+- 详情页已经有 displayName，README 仍不要一级标题。默认英文；用
+  `href="#english"` / `href="#chinese"` 做页内切换，不要另开 README.zh-CN.md
+  （商店只渲染 README.md）。
+- 示意图 `<img width="480">`，最多两三张。相对路径 `media/*.png`，靠 vsce 改写成
+  GitHub https。短描述英文在前。
+- 流水线：17 files / 179 tests；覆盖率 stmts/branch/lines `93.81%/88.08%/96.37%`。
+  main bundle 123,732 B。cold p50/p95 `139.2/158.1 ms`，warm p50/p95 `14.9/21.9 ms`，
+  scanner p95 `0.65 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.35.vsix`，`1,192,129` bytes，SHA-256
+  `37712EA9B9820DF747CFBEBC472A891DE8CA15FC3A0334C8ABAFFF3460EBA1F0`，14 个条目。
+
+## 2026-08-21 卡片错位到左边（0.1.34）
+
+- 用户截图：卡片在 Jupyter 单元格左边，Silk Math 在右下角。原因是 decoration
+  给行设了 `position: relative`，`right: 0` 相对短行行盒，不是编辑器右缘。
+- 不要给锚点行设 relative。包含块走 `lines-content`，`right: 10px` 钉在编辑器
+  右边（状态栏 Silk Math 上头）；竖直用 `translateY(-100% - 8px)` 抬到最后可见行上方。
+- 点击后不要改状态栏文案（不要 `$(chevron-up)`）。
+- 流水线：17 files / 178 tests；覆盖率 stmts/branch/lines `93.81%/88.08%/96.37%`。
+  main bundle 123,732 B。cold p50/p95 `181.5/191.5 ms`（冷门未达 180 ms），warm p50/p95
+  `16.8/25.6 ms`，scanner p95 `0.81 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.34.vsix`，`1,192,094` bytes，SHA-256
+  `321C96800ED0F488A4211DAEEB9A96964E55ECD2AF52C66DEE5B3909B3CDDF6F`，14 个条目。
+
+## 2026-08-21 点击状态栏没反应（0.1.33）
+
+- 点 **Silk Math** 没反应不是命令没绑上。0.1.32 画了卡片，但立刻被关掉或画到视口外：
+  1. `onDidChangeActiveTextEditor(undefined)` / Mouse 选区在点击后马上 `hideFlyout`。
+  2. Monaco `lines-content` 带 `transform`，`position: fixed; bottom: 26px` 相对整篇
+     文档而不是窗口，卡片落在文件末尾。
+- 不要再尝试 `statusBar.entry.showTooltip`：核心用对象身份比较 `ShowTooltipCommand`，
+  扩展设同名字符串会走 commandService，命令并未注册，等于空点击。
+- 卡片用与公式预览相同的 `position: relative` 锚 + `position: absolute; bottom: 100%`。
+  状态栏同时展开 `−` / `%` / `+` / 齿轮，因为 decoration 里的 SVG 是图片，`command:`
+  链接点不了。
+- 流水线：17 files / 178 tests；覆盖率 stmts/branch/lines `93.81%/88.08%/96.37%`。
+  main bundle 123,784 B。cold p50/p95 `138.3/144.5 ms`，warm p50/p95 `13.7/20.5 ms`，
+  scanner p95 `0.81 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.33.vsix`，`1,191,985` bytes，SHA-256
+  `1F726698618F590CB1B9F3B5A629BD9D2E3C11BE7F21CC72F344B91DAFE3B343`，14 个条目。
+
+## 2026-08-21 点击状态栏弹出 Copilot 位卡片（0.1.32）
+
+- Copilot 卡片是核心 `ShowTooltipCommand` + HTML hover，扩展点不到。
+- 点击不要用 QuickPick（会出现在窗口顶部）。用 decoration `position: fixed; bottom: 26px; right: 10px` 钉在状态栏上方。
+- 流水线：17 files / 176 tests；覆盖率 stmts/branch/lines `93.80%/88.07%/96.36%`。
+  main bundle 121,740 B。cold p50/p95 `136.0/143.8 ms`，warm p50/p95 `13.9/20.9 ms`，
+  scanner p95 `0.86 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.32.vsix`，`1,191,461` bytes，SHA-256
+  `17C2FFB4397786E17BF215062E3FF5DF43EF7797A5A93C2B5DAC560D7DB0561A`，14 个条目。
+
+## 2026-08-21 Markdown 表格与更轻的热路径（0.1.31）
+
+- GFM `| col |` + 分隔行当成一张表，和 tabular 一样译成 `array`。表内 `$` 不再单独成区域。
+- Worker 同时只跑最新请求，旧的直接 superseded。连打字时 CPU/内存都比排队渲染低。
+- 流水线：17 files / 175 tests；覆盖率 stmts/branch/lines `93.87%/88.60%/96.32%`。
+  main bundle 116,640 B。cold p50/p95 `141.3/145.2 ms`，warm p50/p95 `13.8/22.9 ms`，
+  scanner p95 `0.98 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.31.vsix`，`1,189,847` bytes，SHA-256
+  `791D44B7B7CD2B47B3BEBCF75D96C609CEDB96779A24D1DA947E1BD821CF07B8`，14 个条目。
+
+## 2026-08-21 Jupyter 单元格裁切浮层（0.1.30）
+
+- notebook 单元格 `overflow` 会裁掉 decoration，z-index 救不了。公式贴底时把
+  浮层翻到上方，仍画在当前格内部。
+- 流水线：16 files / 167 tests；覆盖率 stmts/branch/lines `94.12%/88.68%/96.26%`。
+  main bundle 113,156 B。cold p50/p95 `135.7/146.8 ms`，warm p50/p95 `13.8/22.1 ms`，
+  scanner p95 `0.46 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.30.vsix`，`1,188,662` bytes，SHA-256
+  `54E5137FDF136CA0F3CD1749A37F253CBFC9EE9469DA70DC2685B3A5BFF69A8C`，14 个条目。
+
+## 2026-08-21 underbrace 拉伸段必须几何裁剪（0.1.29）
+
+- 装饰 SVG 是 `content: url(data:image/svg+xml;base64,...)`。里面的
+  `clip-path="url(#id)"` 不会生效，看起来就像多一根横线、括号右端断开。
+- 内层 svg 里的拉伸段是轴对齐矩形。按 viewBox 求交后写成 `M x y H x V y H x Z`，
+  不要依赖 fragment URL。
+- 流水线：16 files / 162 tests；覆盖率 stmts/branch/lines `94.22%/88.98%/96.34%`。
+  main bundle 112,323 B。cold p50/p95 `143.8/151.2 ms`，warm p50/p95 `15.2/25.1 ms`，
+  scanner p95 `0.65 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.29.vsix`，`1,188,340` bytes，SHA-256
+  `E3D3925D6EC06F9E0C6B0C01B3074E3D5809B6B49F9F4BB4C3B62FC94F919BF5`，14 个条目。
+
+## 2026-08-21 状态栏点击必须有可见反馈（0.1.28）
+
+- 不要把 `item.command` 设成 `statusBar.entry.showTooltip` 再注册空实现：
+  扩展走不到核心的对象身份分支，点击等于没反应。
+- 点击用 `silkMath.showMenu`（QuickPick，开关后保持打开）。悬停才是 Markdown
+  悬浮框。两者都要有，不能只留悬停。
+- 流水线：16 files / 162 tests；覆盖率 stmts/branch/lines `94.22%/88.98%/96.34%`。
+  main bundle 112,323 B。cold p50/p95 `170.3/211.4 ms`（冷门未达 180 ms），warm p50/p95
+  `16.5/24.9 ms`，scanner p95 `0.70 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.28.vsix`，`1,187,454` bytes，SHA-256
+  `244147F421CD20BC5A496628C24A65242AB42A7CB3B761DFC4B0D73FE6B44BF6`，14 个条目。
+
+## 2026-08-21 underbrace 裁剪、浮层留白、默认 135%（0.1.27）
+
+- 内层 svg 展成 `<g>` 时必须保留 viewBox 裁剪（`clipPath`）。否则拉伸矩形铺开，
+  `\underbrace` 看起来像一根直线。
+- `expandViewBoxToContent` 只在定位点落在原 viewBox **之外** 时才外扩。对每个
+  transform 原点一律 ±2000 会让所有公式四周空一圈。
+- `silkMath.previewScale` 默认 `1.35`。界面百分比 = 实际倍率 / 1.35。
+- 流水线：16 files / 162 tests；覆盖率 stmts/branch/lines `94.22%/88.98%/96.34%`。
+  main bundle 111,881 B。cold p50/p95 `177.8/231.5 ms`（冷门未达 180 ms），warm p50/p95
+  `17.0/32.0 ms`，scanner p95 `1.16 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.27.vsix`，`1,187,260` bytes，SHA-256
+  `12690FB4CBE2508121A6DF5DACFB8672DE4F76F87857372A1F5E37EB0AD272F2`，14 个条目。
+
+## 2026-08-21 underbrace 空浮层（0.1.26）
+
+- 浮层有宽高、里面是空的 = SVG 当 `contentIconPath` 图片失败，不是 MathJax 没画出 path。
+- `\underbrace` 拉伸段是**内层 `<svg x y viewBox>`**。Webview `innerHTML` 能画，VS Code
+  装饰的 `content: url(data:image/svg+xml)` 遇到嵌套 svg 整张空白。
+- 修法：内层 svg 展平成等价 `<g transform>`；viewBox 按变换后的定位点外扩，否则
+  `{=0 \text{ by the PDE}}` 会被根 viewBox 裁掉。
+- 流水线：16 files / 162 tests；覆盖率 stmts/branch/lines `94.22%/88.98%/96.34%`。
+  main bundle 111,880 B。cold p50/p95 `132.6/154.6 ms`，warm p50/p95 `13.3/21.7 ms`，
+  scanner p95 `0.65 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.26.vsix`，`1,187,027` bytes，SHA-256
+  `4F6C8E455B78E674D362B9C323B910B1D4D5D5882135288DD876F931E1864249`，14 个条目。
+
+## 2026-08-21 状态栏 Copilot 式悬浮框，不再贡献视图（0.1.25）
+
+- 用户要的是 Copilot 那种钉在状态栏上方的小卡片，不是 panel / 辅助栏。
+  `views` / `viewsContainers` 会永远带着工作区 chrome，而且 VS Code 会记住旧位置，
+  所以 0.1.16–0.1.24 的 webview 卡片在用户机器上仍显示成底栏整条「Silk Math」标签。
+- 扩展没有 Copilot 的 `statusBar.entry.showTooltip` 对象身份；公开能力是
+  可信 MarkdownString tooltip（同一套 hover 组件）。点击挂同名 command，未命中时
+  空实现，避免「找不到命令」。不要再加 view。
+- 流水线：16 files / 162 tests；覆盖率 stmts/branch/lines `94.12%/88.73%/96.23%`。
+  main bundle 111,880 B。cold p50/p95 `136.7/144.2 ms`，warm p50/p95 `12.4/22.3 ms`，
+  scanner p95 `0.45 ms`，idle restart 通过。
+- 产物 `silk-math-preview-0.1.25.vsix`，`1,185,627` bytes，SHA-256
+  `94FF6F39CC5E4B06727B8A4CF01DC5EAAE792F39203EF6A02D9DE3C2614D315D`，14 个条目。
+
 ## 2026-08-20 默认预览 140% 显示为 100%（0.1.24）
 
 - `silkMath.previewScale` 默认 `1.4`。界面百分比 = 实际倍率 / 1.4。

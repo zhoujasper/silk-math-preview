@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildPreviewExpression, PREVIEW_CARET_TEX } from '../src/core/previewExpression';
+import {
+  buildPreviewExpression,
+  PREVIEW_CARET_TEX,
+  sanitizeEnvironmentBodyForMathJax,
+} from '../src/core/previewExpression';
 import { scanMathRegions } from '../src/core/mathScanner';
 
 describe('buildPreviewExpression', () => {
@@ -74,6 +78,15 @@ describe('buildPreviewExpression', () => {
     expect(result.caret.exact).toBe(false);
     expect(result.caret.reason).toBe('left-right-head');
     expect(result.expression).not.toContain(String.raw`\le${PREVIEW_CARET_TEX}ft`);
+  });
+
+  it('自定义环境 prelude 里的 equation/align 折成可嵌套形式', () => {
+    expect(sanitizeEnvironmentBodyForMathJax(String.raw`\begin{equation}`)).toBe('');
+    expect(sanitizeEnvironmentBodyForMathJax(String.raw`\end{equation}`)).toBe('');
+    expect(sanitizeEnvironmentBodyForMathJax(String.raw`\begin{align}`)).toBe(String.raw`\begin{aligned}`);
+    expect(sanitizeEnvironmentBodyForMathJax(String.raw`\end{align}`)).toBe(String.raw`\end{aligned}`);
+    expect(sanitizeEnvironmentBodyForMathJax(String.raw`\begin{aligned}`)).toBe(String.raw`\begin{aligned}`);
+    expect(sanitizeEnvironmentBodyForMathJax(String.raw`\begin{alignat}`)).toBe(String.raw`\begin{alignedat}`);
   });
 
   it('为自定义数学环境补回环境头尾，也可关闭光标', () => {

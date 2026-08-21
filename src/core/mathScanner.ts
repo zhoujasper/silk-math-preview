@@ -1,4 +1,5 @@
 import { DEFAULT_MATH_ENVIRONMENTS } from './completionCatalog';
+import { collectMarkdownTableRegions } from './markdownTable';
 import { TABLE_ENVIRONMENTS } from './tablePreview';
 import type {
   MathRecoveryReason,
@@ -236,11 +237,92 @@ function collectLatexCommentRanges(
   return comments;
 }
 
+function innerInlineCodeRange(text: string, range: TextRange): TextRange {
+  let openEnd = range.start;
+  while (openEnd < range.end && text[openEnd] === '`') openEnd += 1;
+  let closeStart = range.end;
+  while (closeStart > openEnd && text[closeStart - 1] === '`') closeStart -= 1;
+  return { start: openEnd, end: closeStart };
+}
+
+function innerFenceRange(text: string, range: TextRange): TextRange {
+  const afterOpen = nextLineStart(text, lineEndAfter(text, range.start));
+  let lineStart = range.start;
+  let lastLineStart = range.start;
+  while (lineStart < range.end) {
+    lastLineStart = lineStart;
+    lineStart = nextLineStart(text, lineEndAfter(text, lineStart));
+  }
+  const lastLine = text.slice(lastLineStart, contentEndOfFenceLine(text, lastLineStart, range.end));
+  const closed = lastLineStart > range.start && /^ {0,3}(`+|~+)[ \t]*$/.test(lastLine);
+  return {
+    start: Math.min(afterOpen, range.end),
+    end: closed ? lastLineStart : range.end,
+  };
+}
+
+function contentEndOfFenceLine(text: string, lineStart: number, limit: number): number {
+  const rawEnd = Math.min(lineEndAfter(text, lineStart), limit);
+  return rawEnd > lineStart && text[rawEnd - 1] === '\r' ? rawEnd - 1 : rawEnd;
+}
+
+function collectMarkdownCodeLimits(
+  text: string,
+  fenceRanges: readonly TextRange[],
+  inlineRanges: readonly TextRange[],
+): TextRange[] {
+  return [
+    ...inlineRanges.map((range) => innerInlineCodeRange(text, range)),
+    ...fenceRanges.map((range) => innerFenceRange(text, range)),
+  ].filter((range) => range.end > range.start);
+}
+
+function skipHorizontalSpace(text: string, start: number, end: number): number {
+  let cursor = start;
+  while (cursor < end && (text[cursor] === ' ' || text[cursor] === '\t')) cursor += 1;
+  return cursor;
+}
+
+function skipHorizontalSpaceEnd(text: string, start: number, end: number): number {
+  let cursor = end;
+  while (cursor > start && (text[cursor - 1] === ' ' || text[cursor - 1] === '\t')) cursor -= 1;
+  return cursor;
+}
+
+/**
+ * `` `$x$` `` 整段都是一条公式：光标落在两侧反引号上也要命中。
+ * `` `see $x$` `` 这种代码里还夹着别的字，仍然只命中 `$x$` 本身。
+ */
+function expandRegionsOverInlineCode(
+  text: string,
+  regions: readonly MathRegion[],
+  inlineRanges: readonly TextRange[],
+): MathRegion[] {
+  if (inlineRanges.length === 0) return [...regions];
+  return regions.map((region) => {
+    const wrap = inlineRanges.find((range) => {
+      if (region.start < range.start || region.end > range.end) return false;
+      const inner = innerInlineCodeRange(text, range);
+      const trimmedStart = skipHorizontalSpace(text, inner.start, inner.end);
+      const trimmedEnd = skipHorizontalSpaceEnd(text, inner.start, inner.end);
+      return region.start === trimmedStart && region.end === trimmedEnd;
+    });
+    if (wrap === undefined || (wrap.start === region.start && wrap.end === region.end)) {
+      return region;
+    }
+    return { ...region, start: wrap.start, end: wrap.end };
+  });
+}
+
 function collectIgnoredRanges(
   text: string,
   language: 'latex' | 'markdown',
   initialFence?: MarkdownFenceState,
-): TextRange[] {
+): {
+  readonly ignored: TextRange[];
+  readonly codeLimits: TextRange[];
+  readonly inlineCode: TextRange[];
+} {
   const codeRanges =
     language === 'markdown'
       ? collectMarkdownFenceRanges(text, initialFence)
@@ -254,7 +336,13 @@ function collectIgnoredRanges(
     language === 'latex'
       ? collectLatexCommentRanges(text, baseRanges)
       : [];
-  return mergeRanges([...baseRanges, ...comments]);
+  return {
+    ignored: mergeRanges([...baseRanges, ...comments]),
+    codeLimits: language === 'markdown'
+      ? collectMarkdownCodeLimits(text, codeRanges, inlineCodeRanges)
+      : [],
+    inlineCode: inlineCodeRanges,
+  };
 }
 
 function readEnvironmentHead(text: string, offset: number): EnvironmentHead | undefined {
@@ -365,9 +453,19 @@ function findFixedCloser(
   text: string,
   opener: DelimiterOpener,
   ignoredRanges: readonly TextRange[],
+  codeLimits: readonly TextRange[],
 ): TextRange | undefined {
+  const home = rangeContaining(codeLimits, opener.start);
+  const searchEnd = home?.end ?? text.length;
   let cursor = opener.end;
-  while (cursor < text.length) {
+  while (cursor < searchEnd) {
+    if (home === undefined) {
+      const nestedCode = rangeContaining(codeLimits, cursor);
+      if (nestedCode !== undefined) {
+        cursor = nestedCode.end;
+        continue;
+      }
+    }
     const ignored = rangeContaining(ignoredRanges, cursor);
     if (ignored !== undefined) {
       cursor =
@@ -407,14 +505,24 @@ function findEnvironmentCloser(
   text: string,
   opener: DelimiterOpener,
   ignoredRanges: readonly TextRange[],
+  codeLimits: readonly TextRange[],
 ): TextRange | undefined {
   const environmentName = opener.environment;
   if (environmentName === undefined) {
     return undefined;
   }
+  const home = rangeContaining(codeLimits, opener.start);
+  const searchEnd = home?.end ?? text.length;
   let depth = 1;
   let cursor = opener.end;
-  while (cursor < text.length) {
+  while (cursor < searchEnd) {
+    if (home === undefined) {
+      const nestedCode = rangeContaining(codeLimits, cursor);
+      if (nestedCode !== undefined) {
+        cursor = nestedCode.end;
+        continue;
+      }
+    }
     const ignored = rangeContaining(ignoredRanges, cursor);
     if (ignored !== undefined) {
       cursor = ignored.end;
@@ -453,8 +561,10 @@ function recoveryBoundary(
   text: string,
   opener: DelimiterOpener,
   windowChars: number,
+  codeLimits: readonly TextRange[],
 ): number {
-  const cap = Math.min(text.length, opener.start + windowChars);
+  const home = rangeContaining(codeLimits, opener.start);
+  const cap = Math.min(home?.end ?? text.length, opener.start + windowChars);
   const remaining = text.slice(opener.end, cap);
   const blankLine = /\r?\n[ \t]*\r?\n/.exec(remaining);
   if (blankLine !== null) {
@@ -527,12 +637,26 @@ export function scanMathRegions(
     64,
     Math.floor(options.recoveryWindowChars ?? DEFAULT_RECOVERY_WINDOW),
   );
-  const ignoredRanges = collectIgnoredRanges(text, language, options.markdownInitialFence);
-  const regions: MathRegion[] = [];
+  const collected = collectIgnoredRanges(text, language, options.markdownInitialFence);
+  const ignoredRanges = collected.ignored;
+  const tableRegions = language === 'markdown'
+    ? collectMarkdownTableRegions(text, ignoredRanges)
+    : [];
+  // Markdown 行内代码 / fence 里的 $ 也要预览；定义解析仍用 ignoredRanges 跳过代码。
+  const mathSkip = language === 'markdown'
+    ? tableRegions.map((region) => ({ start: region.start, end: region.end }))
+    : tableRegions.length === 0
+      ? ignoredRanges
+      : mergeRanges([
+        ...ignoredRanges,
+        ...tableRegions.map((region) => ({ start: region.start, end: region.end })),
+      ]);
+  const codeLimits = collected.codeLimits;
+  const regions: MathRegion[] = [...tableRegions];
 
   let cursor = 0;
   while (cursor < text.length) {
-    const ignored = rangeContaining(ignoredRanges, cursor);
+    const ignored = rangeContaining(mathSkip, cursor);
     if (ignored !== undefined) {
       cursor = ignored.end;
       continue;
@@ -545,21 +669,25 @@ export function scanMathRegions(
 
     const close =
       opener.kind === 'environment'
-        ? findEnvironmentCloser(text, opener, ignoredRanges)
-        : findFixedCloser(text, opener, ignoredRanges);
+        ? findEnvironmentCloser(text, opener, mathSkip, codeLimits)
+        : findFixedCloser(text, opener, mathSkip, codeLimits);
     if (close !== undefined) {
       const region = makeClosedRegion(opener, close);
       regions.push(region);
       cursor = region.end;
     } else {
-      const boundary = recoveryBoundary(text, opener, recoveryWindow);
+      const boundary = recoveryBoundary(text, opener, recoveryWindow, codeLimits);
       const region = makeRecoveredRegion(opener, boundary);
       regions.push(region);
       cursor = Math.max(opener.end, boundary);
     }
   }
 
-  return { regions, ignoredRanges };
+  if (tableRegions.length > 0) regions.sort((left, right) => left.start - right.start);
+  return {
+    regions: expandRegionsOverInlineCode(text, regions, collected.inlineCode),
+    ignoredRanges,
+  };
 }
 
 /** 闭区间规则与 {@link findMathRegionAt} 一致：闭合区域不含 end。 */

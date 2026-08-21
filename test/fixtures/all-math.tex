@@ -1,0 +1,316 @@
+\documentclass{silkmath-fixture}
+\usepackage{amsmath,amssymb,booktabs,xcolor}
+% 上面的 sty/cls 已由 \documentclass 加载：\eps \R \A \norm \Ocal \Tr 颜色、eqmath、question/solution。
+
+\title{Silk Math 系统预览样例}
+\begin{document}
+
+\section{分隔符：\$ \$、\$\$ \$\$、\verb|\(| \verb|\)|、\verb|\[| \verb|\]|}
+
+行内 $E=mc^2$ 与带宏的 $u\in\R^d$、$\norm{\A x}\le\eps$。
+
+把光标放进行尾公式，预览应从公式下方往右，而不是行首：前面垫一些文字 $\norm{\A u}$。
+
+圆括号行内 \(\alpha+\beta=\gamma\)，\(\pd{u}{t}=\Delta u\)。
+
+独立美元段：
+$$
+\int_\Omega \abs{\nabla u}^2\,\mathrm{d}x = 0
+$$
+
+方括号独立段：
+\[
+\argmin_{x\in\R^n} \norm{\A x-b}_2^2
+\]
+
+行内公式跨行（中间不能有空行）：
+$\frac{1}{2\pi}
+\int_0^{2\pi} e^{in\theta}\,\mathrm{d}\theta$
+
+\section{分隔符里再套顶层环境}
+
+$$
+\begin{equation}
+  u_t + \operatorname{div}(u\A) = 0
+\end{equation}
+$$
+
+\[
+\begin{align}
+  a &= b+c \\
+  d &= e+f
+\end{align}
+\]
+
+\section{公式环境}
+
+\begin{equation}
+  \label{eq:energy}
+  E(u)=\int_\Omega \abs{\nabla u}^2\,\mathrm{d}x
+\end{equation}
+
+\begin{equation*}
+  \mathrm{e}^{i\pi}+1=0
+\end{equation*}
+
+\begin{align}
+  x &= y+z \label{eq:a} \\
+  u &= \Tr(\A^\top\A)
+\end{align}
+
+\begin{align*}
+  f(x) &= x^2 \\
+  g(x) &= \sin x
+\end{align*}
+
+\begin{alignat}{2}
+  x &= 1 &\qquad y &= 2 \\
+  u &= 3 &\qquad v &= 4
+\end{alignat}
+
+\begin{gather}
+  a+b=c \\
+  d+e=f
+\end{gather}
+
+\begin{gather*}
+  1+1=2 \\
+  2+2=4
+\end{gather*}
+
+\begin{multline}
+  a+b+c+d+e+f \\
+  +g+h+i+j
+\end{multline}
+
+\begin{equation}
+\begin{split}
+  (a+b)^2
+  &= a^2+2ab+b^2
+\end{split}
+\end{equation}
+
+\begin{equation}
+\begin{aligned}
+  u &= \A v \\
+  w &= \B u
+\end{aligned}
+\end{equation}
+
+\section{类文件里的数学环境 vs 文本环境}
+
+\begin{eqmath}
+  \clsOnly{X} = \Ocal(h^2)
+\end{eqmath}
+
+\begin{question}
+  证明 $u\equiv-1$。里面的行内公式和
+  \[
+    \Delta u = 0 \quad\text{in }\Omega
+  \]
+  都应单独预览，不能把整段 question 当成一条公式。
+\end{question}
+
+\begin{solution}
+  由能量 $E(u)=0$ 得 $\nabla u=0$，因此 $u$ 为常数。
+\end{solution}
+
+\section{矩阵、array、cases}
+
+\[
+\begin{matrix} 1 & 2 \\ 3 & 4 \end{matrix}
+\quad
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+\quad
+\begin{bmatrix} 1 & 0 \\ 0 & 1 \end{bmatrix}
+\quad
+\begin{Bmatrix} x \\ y \end{Bmatrix}
+\quad
+\begin{vmatrix} a & b \\ c & d \end{vmatrix}
+\quad
+\begin{Vmatrix} u \\ v \end{Vmatrix}
+\]
+
+\[
+\begin{smallmatrix} 1&2\\3&4 \end{smallmatrix}
+\qquad
+\begin{array}{c|cc}
+  a & b & c \\
+  \hline
+  d & e & f
+\end{array}
+\]
+
+\[
+  f(x)=\begin{cases}
+    x^2 & x\ge 0 \\
+    -x  & x<0
+  \end{cases}
+\]
+
+\section{underbrace / overbrace / 根号 / 划掉}
+
+\[
+  \underbrace{a+b+c}_{\text{sum}} + \overbrace{xy}^{\text{prod}}
+\]
+
+\[
+  \underbrace{\A u}_{=0 \text{ by the PDE}}
+\]
+
+\[
+  \overline{z+w}\quad \underline{abc}\quad \sqrt{x^2+1}\quad \sqrt[3]{8}
+\]
+
+\[
+  \hat a \quad \bar b \quad \vec{v} \quad \dot u \quad \ddot u
+  \quad \tilde f \quad \widehat{ABC} \quad \widetilde{xyz}
+\]
+
+\[
+  \cancel{x} \quad \bcancel{y} \quad \xcancel{z} \quad \cancelto{0}{h}
+\]
+
+\section{分数、上下标、binom、substack}
+
+\[
+  \frac{1}{2}+\dfrac{a}{b}+\tfrac{1}{n}+\frac12+\sqrt{\frac{p}{q}}
+\]
+
+\[
+  x^{2}_{i,j} \quad a^{b^{c}} \quad \binom{n}{k}
+  \quad \sum_{\substack{i=1\\ i\neq j}}^{n} a_{ij}
+\]
+
+\section{大小定界符}
+
+\[
+  \left( \frac{a}{b} \right)
+  \quad \bigl[ x \bigr]
+  \quad \Bigl\{ y \Bigr\}
+  \quad \biggl\langle u \biggr\rangle
+  \quad \left\{ x \;\middle|\; x>0 \right\}
+\]
+
+\section{文本、字体、颜色}
+
+\[
+  \text{energy } E(u)
+  \quad \mathrm{d}x
+  \quad \mathbf{x}
+  \quad \mathbb{R}
+  \quad \mathcal{L}
+  \quad \mathscr{H}
+  \quad \mathfrak{g}
+  \quad \boldsymbol{\beta}
+  \quad \bm{v}
+\]
+
+\[
+  \textcolor{Accent}{u}
+  +\textcolor{Ok}{v}
+  +\textcolor{Warn}{w}
+  +\textcolor{ClsAccent}{\clsOnly{Y}}
+\]
+
+\[
+  \text{中文标签：} \quad u_{\text{内点}}
+\]
+
+\section{自定义宏（来自 .sty / .cls）}
+
+\[
+  \ip{\A u}{v} + \norm{\Ocal} + \pd{u}{x} + \diag(\B) + \Tr(\A)
+\]
+
+正文里再声明一次，当前文件宏也应生效：
+\newcommand{\fileMacro}[1]{\mathrm{#1}}
+\[
+  \fileMacro{id} + \A
+\]
+
+\section{LaTeX 表格 tabular / longtable / booktabs}
+
+\begin{tabular}{l|cr}
+  左 & 中 & 右 \\
+  $a$ & $b$ & $c$
+\end{tabular}
+
+\begin{tabular}{|c|c|c|}
+  \hline
+  A & B & C \\
+  \hline
+  1 & 2 & 3 \\
+  \hline
+\end{tabular}
+
+\begin{tabular}{cc|c}
+  \toprule
+  方法 & $L^2$ 误差 & 阶 \\
+  \midrule
+  Crank--Nicolson & $3.1\times 10^{-4}$ & $2.00$ \\
+  Backward Euler & $1.7\times 10^{-2}$ & $1.01$ \\
+  \bottomrule
+\end{tabular}
+
+\begin{tabular}{cc}
+  \multicolumn{2}{c}{合并单元格} \\
+  $x$ & $y$
+\end{tabular}
+
+\begin{tabular}{*{3}{c}}
+  a & b & c \\
+  d & e & f
+\end{tabular}
+
+\begin{tabular}{p{3cm}c}
+  自动换行的段落列 & $z$
+\end{tabular}
+
+\begin{longtable}{cc}
+  头 & 值 \\
+  $\alpha$ & 1 \\
+  $\beta$ & 2
+\end{longtable}
+
+\section{长 aligned（滚动时预览应跟着可见行）}
+
+\begin{align}
+  a_1 &= 1 \\
+  a_2 &= 2 \\
+  a_3 &= 3 \\
+  a_4 &= 4 \\
+  a_5 &= 5 \\
+  a_6 &= 6 \\
+  a_7 &= 7 \\
+  a_8 &= 8 \\
+  a_9 &= 9 \\
+  a_{10} &= 10
+\end{align}
+
+\section{光标容易踩坑的位置}
+
+% 无花括号的分数参数、文本里的竖线、underbrace 参数缝
+$\frac12+\frac1{2}$
+$\text{for } x\in\R$
+$\underbrace{abc}_{=0}$
+$\textcolor{Accent}{u}$
+
+\section{注释里的美元不应成公式}
+
+% $this is a comment$
+正文 $x$ 才是公式。
+
+\section{未定义命令（应红字，其余仍渲染）}
+
+\[
+  \thisCommandDoesNotExist + x^2
+\]
+
+\section{TikZ（应提示需要完整 TeX 引擎，而不是空白）}
+
+\begin{tikzpicture}
+  \draw (0,0) -- (1,1);
+\end{tikzpicture}
+
+\end{document}

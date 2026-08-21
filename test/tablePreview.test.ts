@@ -169,4 +169,33 @@ describe('表格预览渲染', () => {
     expect(table.svg).toContain(`width="${table.widthPx}px"`);
     renderer.clear();
   });
+
+  it('竖线和 hline 的外框是描边，不是实心色块', () => {
+    const source = String.raw`\begin{tabular}{|c|c|c|}
+\hline
+A & B & C \\
+\hline
+1 & 2 & 3 \\
+\hline
+\end{tabular}`;
+    const region = regionAt(source, source.indexOf('A'));
+    const expression = buildPreviewExpression(source, region, source.indexOf('A'), false).expression;
+    const renderer = new MathJaxSvgRenderer();
+    const result = renderer.render({
+      displayMode: true,
+      definitionFingerprint: 'framed-tabular',
+      definitionPrelude: '',
+      foreground: '#d4d4d4',
+      caretColor: '#ffb454',
+      scale: TABLE_PREVIEW_SCALE,
+      exPx: 7,
+      markUnknownCommands: false,
+      expression,
+    });
+    const frame = /<rect\b[^>]*data-frame="true"[^>]*>/i.exec(result.svg)?.[0];
+    expect(frame).toMatch(/fill="none"/i);
+    expect(result.svg).toMatch(/<rect\b[^>]*data-line="v"[^>]*width="70"/i);
+    expect(result.svg).toContain('data-c="41');
+    renderer.clear();
+  });
 });

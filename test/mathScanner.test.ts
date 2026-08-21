@@ -73,7 +73,7 @@ describe('scanMathRegions', () => {
     )).toBe('% $ignored$');
   });
 
-  it('跳过 Markdown inline code、反引号 fence 和波浪线 fence', () => {
+  it('Markdown 行内代码和 fence 里的公式也可以预览，定义解析仍忽略代码', () => {
     const text = [
       '`$inline-code$` and $math$',
       '```tex',
@@ -87,19 +87,62 @@ describe('scanMathRegions', () => {
     const result = scanMathRegions(text, { language: 'markdown' });
 
     expect(result.regions.map((region) => mathRegionContent(text, region))).toEqual([
+      'inline-code',
       'math',
+      'fenced',
+      'also-fenced',
       'live',
     ]);
-    // 相邻的两个 fenced block 会合并为一个连续忽略区间。
-    expect(result.ignoredRanges).toHaveLength(2);
+    expect(result.ignoredRanges.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('支持跨行 Markdown code span 和未闭合 fence', () => {
+  it('行内代码里的公式不会跨出反引号去配对', () => {
+    const text = '`$unclosed` and $math$';
+    const result = scanMathRegions(text, { language: 'markdown' });
+    expect(result.regions.map((region) => mathRegionContent(text, region))).toEqual([
+      'unclosed',
+      'math',
+    ]);
+    expect(result.regions[0]?.closed).toBe(false);
+    expect(result.regions[1]?.closed).toBe(true);
+  });
+
+  it('`` `$not math$` `` 整段行内代码都可点进预览，夹杂文字则只命中公式', () => {
+    const wrapped = '`$not math$`';
+    const wrappedScan = scanMathRegions(wrapped, { language: 'markdown' });
+    expect(wrappedScan.regions).toHaveLength(1);
+    expect(mathRegionContent(wrapped, wrappedScan.regions[0]!)).toBe('not math');
+    expect(wrappedScan.regions[0]).toMatchObject({ start: 0, end: wrapped.length, closed: true });
+    for (let offset = 0; offset < wrapped.length; offset += 1) {
+      expect(
+        findMathRegionAt(wrappedScan.regions, offset),
+        `offset ${offset}`,
+      ).toBe(wrappedScan.regions[0]);
+    }
+
+    const padded = '` $x$ `';
+    const paddedScan = scanMathRegions(padded, { language: 'markdown' });
+    expect(mathRegionContent(padded, paddedScan.regions[0]!)).toBe('x');
+    expect(paddedScan.regions[0]?.start).toBe(0);
+    expect(paddedScan.regions[0]?.end).toBe(padded.length);
+
+    const mixed = '`see $x$ here`';
+    const mixedScan = scanMathRegions(mixed, { language: 'markdown' });
+    expect(mathRegionContent(mixed, mixedScan.regions[0]!)).toBe('x');
+    expect(mixedScan.regions[0]?.start).toBe(mixed.indexOf('$'));
+    expect(mixedScan.regions[0]?.end).toBe(mixed.indexOf('$', mixed.indexOf('$') + 1) + 1);
+    expect(findMathRegionAt(mixedScan.regions, 0)).toBeUndefined();
+  });
+
+  it('支持跨行 Markdown code span 和未闭合 fence 里的公式', () => {
     const text = '`code\n$still-code$` $math$\n```\n$never-math$';
     const result = scanMathRegions(text, { language: 'markdown' });
 
-    expect(result.regions).toHaveLength(1);
-    expect(mathRegionContent(text, result.regions[0]!)).toBe('math');
+    expect(result.regions.map((region) => mathRegionContent(text, region))).toEqual([
+      'still-code',
+      'math',
+      'never-math',
+    ]);
     expect(result.ignoredRanges.at(-1)?.end).toBe(text.length);
   });
 
@@ -115,7 +158,7 @@ describe('scanMathRegions', () => {
 
     expect(fenced.regions.map(
       (region) => mathRegionContent(fencedText, region),
-    )).toEqual(['first', 'third']);
+    )).toEqual(['first', 'fenced', 'third']);
 
     const unmatchedText = '$first$ `unclosed $second$';
     const unmatched = scanMathRegions(unmatchedText, { language: 'markdown' });
@@ -141,7 +184,7 @@ describe('scanMathRegions', () => {
 
     expect(result.regions.map(
       (region) => mathRegionContent(fragment, region),
-    )).toEqual(['math']);
+    )).toEqual(['not_math', 'math']);
   });
 
   it('逐行推进 Markdown fence 状态并遵守 marker 与长度', () => {

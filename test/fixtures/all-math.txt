@@ -1,0 +1,85 @@
+Silk Math 纯文本样例
+====================
+
+这个文件不是 latex/markdown。要预览，先点状态栏 Silk Math，打开「其他文件类型」。
+
+分隔符
+------
+
+行内 $a^2+b^2=c^2$ 与 \(e^{i\pi}+1=0\)。
+
+把光标放进行尾公式，预览应对准它：前面垫一些文字 $E=mc^2$。
+
+独立段：
+
+$$
+\sum_{n=1}^\infty \frac{1}{n^2}=\frac{\pi^2}{6}
+$$
+
+\[
+  \int_{-\infty}^{\infty} e^{-x^2}\,\mathrm{d}x=\sqrt{\pi}
+\]
+
+跨行行内：
+$\frac{1}{2\pi}
+\int_0^{2\pi}\cos\theta\,\mathrm{d}\theta$
+
+环境
+----
+
+$$
+\begin{equation}
+  u\equiv -1
+\end{equation}
+$$
+
+\[
+\begin{align}
+  x &= y+z \\
+  u &= v+w
+\end{align}
+\]
+
+矩阵 / underbrace / 划掉 / 分数
+------------------------------
+
+$$
+\begin{bmatrix} 1 & 0 \\ 0 & 1 \end{bmatrix}
+\quad
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}
+\quad
+\begin{cases} 1 & x\ge 0 \\ 0 & x<0 \end{cases}
+$$
+
+$$
+\underbrace{a+b+c}_{=0 \text{ by the PDE}}
+\quad
+\overline{z}
+\quad
+\sqrt{x^2+1}
+\quad
+\cancel{h}
+$$
+
+$$
+\frac{1}{2}+\binom{n}{k}+\sum_{\substack{i=1\\i\neq j}}^n a_{ij}
+$$
+
+$$
+\left( \frac{a}{b} \right)
+\quad \mathbf{x}
+\quad \mathbb{R}
+\quad \text{for } x>0
+$$
+
+文件内自己定义的命令
+--------------------
+
+$\newcommand{\txtA}{\mathbf{A}}\txtA x = 0$
+
+$\def\txtE{\varepsilon} u=\txtE$
+
+未定义命令
+----------
+
+$\notARealCommand + 1$ 应红字。

@@ -3,16 +3,30 @@ import { performance } from 'node:perf_hooks';
 
 import * as vscode from 'vscode';
 
-import { advanceMarkdownFenceState, findMathRegionAt, regionContainsOffset, scanMathRegions, selectionOverlapsRegion } from '../core/mathScanner';
+import {
+  definitionPreviewSample,
+  isDefinitionOnlySource,
+  withDefinitionPreviewSample,
+} from '../core/definitionPreview';
+import { advanceMarkdownFenceState, findMathRegionAt, mathRegionContent, regionContainsOffset, scanMathRegions, selectionOverlapsRegion } from '../core/mathScanner';
 import { buildPreviewExpression } from '../core/previewExpression';
 import {
   floatingPreviewLayout,
+  MONO_CHAR_WIDTH_RATIO,
+  notebookPreviewSpacerCss,
+  notebookPreviewSpacerPx,
   resolveEditorMetrics,
+  previewOverlayOccupiedLines,
   resolvePreviewAnchor,
+  resolvePreviewHorizontalLayout,
+  resolvePreviewPlacement,
+  resolvePreviewRangeStart,
+  visibleColumnOf,
   type EditorMetrics,
+  type PreviewPlacement,
   type PreviewThemeVariant,
 } from '../core/previewLayout';
-import { isTableEnvironment, TABLE_PREVIEW_SCALE } from '../core/tablePreview';
+import { isTablePreviewRegion, TABLE_PREVIEW_SCALE } from '../core/tablePreview';
 import type { MarkdownFenceState, MathRegion, MathScanOptions } from '../core/types';
 import { WeightedLru } from '../core/weightedLru';
 import { RenderClient, type RenderClientStats } from '../render/renderClient';
@@ -88,6 +102,7 @@ interface PreviewSettings {
   readonly previewScale: number;
   readonly showRenderErrors: boolean;
   readonly markUnknownCommands: boolean;
+  readonly previewDefinitions: boolean;
   readonly trace: boolean;
 }
 
@@ -101,9 +116,10 @@ function readSettings(): PreviewSettings {
     showCaret: config.get('showCaret', true),
     maxFormulaChars: config.get('maxFormulaChars', 20_000),
     rendererIdleMs: config.get('rendererIdleMs', 60_000),
-    previewScale: config.get('previewScale', 1.4),
+    previewScale: config.get('previewScale', 1.35),
     showRenderErrors: config.get('showRenderErrors', true),
     markUnknownCommands: config.get('markUnknownCommands', true),
+    previewDefinitions: config.get('previewDefinitions', false),
     trace: config.get('trace', false),
   };
 }
@@ -121,6 +137,13 @@ const DEFAULT_POLICY: PreviewPolicy = {
     return undefined;
   },
 };
+
+function isNotebookCellDocument(document: vscode.TextDocument): boolean {
+  if (document.uri.scheme === 'vscode-notebook-cell') return true;
+  return vscode.workspace.notebookDocuments.some((notebook) =>
+    notebook.getCells().some((cell) => cell.document.uri.toString() === document.uri.toString()),
+  );
+}
 
 function visibleLineSpan(editor: vscode.TextEditor): { start: number; end: number } {
   const ranges = editor.visibleRanges;
@@ -235,6 +258,14 @@ export class PreviewController implements vscode.Disposable {
     readonly rendered: CachedSvg;
     readonly metrics: EditorMetrics;
     readonly renderKey: string;
+    readonly overlayStartLine: number;
+    readonly overlayEndLine: number;
+  } | undefined;
+  /** 同一文档版本里光标还在上次公式内就不必再扫一遍。 */
+  private lastRegionHit: {
+    readonly uri: string;
+    readonly version: number;
+    readonly region: MathRegion;
   } | undefined;
   private settings = readSettings();
   private activePreview: ActivePreview | undefined;
@@ -416,7 +447,7 @@ export class PreviewController implements vscode.Disposable {
       definitionPrelude: snapshot.prelude,
       foreground: palette.foreground,
       caretColor: palette.caret,
-      scale: isTableEnvironment(region.environment) ? TABLE_PREVIEW_SCALE : 1,
+      scale: isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1,
       exPx: metrics.exPx,
       markUnknownCommands: this.settings.markUnknownCommands,
     });
@@ -497,8 +528,18 @@ export class PreviewController implements vscode.Disposable {
   private handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): void {
     const active = this.activePreview;
     if (active !== undefined) {
-      if (active.editor !== event.textEditor || !this.selectionTouchesRegion(event.textEditor, active.region)) {
-        // 点击公式外时先同步清理，不等待定义快照、debounce 或 Worker。
+      if (active.editor !== event.textEditor) {
+        this.clearAllVisible();
+      } else if (this.selectionTouchesRegion(event.textEditor, active.region)) {
+        this.schedule(event.textEditor, 0);
+        return;
+      } else if (
+        event.kind === vscode.TextEditorSelectionChangeKind.Mouse
+        && this.selectionTouchesPreviewOverlay(event.textEditor)
+      ) {
+        // 拖滚动条会把光标落到浮层盖住的源码行上，不能当成离开公式。
+        return;
+      } else {
         this.clearAllVisible();
       }
     }
@@ -511,6 +552,16 @@ export class PreviewController implements vscode.Disposable {
       editor.document.offsetAt(selection.end),
       region,
     ));
+  }
+
+  private selectionTouchesPreviewOverlay(editor: vscode.TextEditor): boolean {
+    const paint = this.lastPaint;
+    if (!paint || paint.editor !== editor || !this.previewVisible) return false;
+    return editor.selections.some((selection) => {
+      const from = Math.min(selection.start.line, selection.end.line);
+      const to = Math.max(selection.start.line, selection.end.line);
+      return from <= paint.overlayEndLine && to >= paint.overlayStartLine;
+    });
   }
 
   /** 只挪 decoration 锚点，不重新渲染。滚动时公式首行出视口，浮层必须跟到仍可见的那一行。 */
@@ -591,12 +642,27 @@ export class PreviewController implements vscode.Disposable {
         ? { recovery: { ...region.recovery, boundary: region.recovery.boundary - region.start } }
         : {}),
     };
-    const expression = buildPreviewExpression(
+    const content = mathRegionContent(regionSource, localRegion);
+    const definitionOnly = isDefinitionOnlySource(content);
+    if (definitionOnly && !this.settings.previewDefinitions) {
+      this.clearFailureNotice();
+      this.clearEditor(editor);
+      this.emitFrame(editor, region, { status: 'idle' });
+      return;
+    }
+    if (definitionOnly && !definitionPreviewSample(content)) {
+      this.clearFailureNotice();
+      this.clearEditor(editor);
+      this.emitFrame(editor, region, { status: 'idle' });
+      return;
+    }
+    const built = buildPreviewExpression(
       regionSource,
       localRegion,
       caretOffset - region.start,
-      showCaret,
+      showCaret && !definitionOnly,
     ).expression;
+    const expression = definitionOnly ? withDefinitionPreviewSample(built, content) : built;
     const displayMode = region.kind !== 'dollar-inline' && region.kind !== 'paren-inline';
     const palette = themePalette();
     const metrics = this.editorMetrics(document);
@@ -610,7 +676,7 @@ export class PreviewController implements vscode.Disposable {
       return;
     }
     // 表格常常比正文公式宽得多，整体缩小一档才放得下。
-    const scale = isTableEnvironment(region.environment) ? TABLE_PREVIEW_SCALE : 1;
+    const scale = isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1;
     const key = cacheKey(
       expression,
       displayMode,
@@ -641,6 +707,12 @@ export class PreviewController implements vscode.Disposable {
       const drawable = response.ok
         && (response.svg.includes('<path') || response.svg.includes('<text') || response.svg.includes('<rect'));
       if (response.ok && !drawable) {
+        if (definitionOnly) {
+          this.clearFailureNotice();
+          this.clearEditor(editor);
+          this.emitFrame(editor, region, { status: 'idle' });
+          return;
+        }
         // 渲染成功却没有任何可见图元：宁可说明原因，也不要留一个空白面板。
         this.emitFrame(editor, region, { status: 'error', message: '公式渲染结果为空，请检查这段内容' });
         this.scheduleFailureNotice(editor, region, metrics, '公式渲染结果为空，请检查这段内容');
@@ -717,7 +789,7 @@ export class PreviewController implements vscode.Disposable {
     const startLine = editor.document.positionAt(region.start).line;
     const endLine = editor.document.positionAt(region.end).line;
     const visible = visibleLineSpan(editor);
-    const placement = this.settings.previewPosition;
+    const placement = this.previewPlacement(editor, startLine, endLine, metrics.lineHeightPx, metrics);
     const anchor = resolvePreviewAnchor({
       formulaStartLine: startLine,
       formulaEndLine: endLine,
@@ -726,19 +798,36 @@ export class PreviewController implements vscode.Disposable {
       placement,
     });
     const text = message.length > 120 ? `${message.slice(0, 119)}…` : message;
+    const formulaStart = editor.document.positionAt(region.start);
+    const formulaEnd = editor.document.positionAt(region.end);
+    const columns = this.previewColumns(editor, formulaStart, formulaEnd, anchor.anchorLine);
+    const noticeWidth = Math.min(720, Math.max(160, text.length * metrics.fontSizePx * 0.55));
+    const horizontal = resolvePreviewHorizontalLayout({
+      previewWidthPx: noticeWidth,
+      previewHeightPx: metrics.lineHeightPx,
+      startColumn: columns.start,
+      endColumn: columns.end,
+      fontSizePx: metrics.fontSizePx,
+      viewportWidthPx: this.estimateViewportWidthPx(editor, metrics),
+    });
+    const notebook = isNotebookCellDocument(editor.document);
+    const spacerPx = notebook && placement === 'below'
+      ? notebookPreviewSpacerPx(horizontal.boxHeightPx, metrics.lineHeightPx)
+      : 0;
     const layout = floatingPreviewLayout({
-      widthPx: Math.min(720, Math.max(160, text.length * metrics.fontSizePx * 0.55)),
+      widthPx: noticeWidth,
       heightPx: metrics.lineHeightPx,
       lineHeightPx: metrics.lineHeightPx,
       lineSpan: anchor.lineSpan,
       placement,
       theme: previewThemeVariant(),
+      leftPx: horizontal.leftPx,
+      boxWidthPx: horizontal.boxWidthPx,
+      boxHeightPx: horizontal.boxHeightPx,
+      overflowX: horizontal.overflowX,
+      overflowY: horizontal.overflowY,
     });
-    const anchorStart = editor.document.lineAt(anchor.anchorLine).range.start;
-    const regionEnd = editor.document.positionAt(region.end);
-    const range = regionEnd.isBeforeOrEqual(anchorStart)
-      ? editor.document.lineAt(anchor.anchorLine).range
-      : new vscode.Range(anchorStart, regionEnd);
+    const range = this.previewDecorationRange(editor, region, anchor.anchorLine);
     editor.setDecorations(this.decoration, [{
       range,
       renderOptions: {
@@ -748,6 +837,17 @@ export class PreviewController implements vscode.Disposable {
           backgroundColor: new vscode.ThemeColor('editorHoverWidget.background'),
           textDecoration: layout.textDecoration,
         },
+        ...(spacerPx > 0
+          ? {
+            after: {
+              contentText: '\u00a0',
+              width: '0px',
+              height: `${spacerPx}px`,
+              margin: '0',
+              textDecoration: notebookPreviewSpacerCss(spacerPx),
+            },
+          }
+          : {}),
       },
     }]);
     // 这一帧不是正常预览，不写入 signature，成功渲染时必须能覆盖它。
@@ -821,6 +921,15 @@ export class PreviewController implements vscode.Disposable {
     offset: number,
     snapshot: PreviewDefinitionSnapshot,
   ): MathRegion | undefined {
+    const hit = this.lastRegionHit;
+    if (
+      hit
+      && hit.uri === document.uri.toString()
+      && hit.version === document.version
+      && regionContainsOffset(hit.region, offset)
+    ) {
+      return hit.region;
+    }
     const started = performance.now();
     const maxChars = this.settings.maxFormulaChars;
     let base = Math.max(0, offset - maxChars - 512);
@@ -840,14 +949,20 @@ export class PreviewController implements vscode.Disposable {
     this.scanSamples.push(elapsed);
     if (this.scanSamples.length > 128) this.scanSamples.shift();
     const local = findMathRegionAt(result.regions, offset - base);
-    return local ? {
+    if (!local) {
+      this.lastRegionHit = undefined;
+      return undefined;
+    }
+    const region: MathRegion = {
       ...local,
       start: local.start + base,
       end: local.end + base,
       contentStart: local.contentStart + base,
       contentEnd: local.contentEnd + base,
       ...(local.recovery ? { recovery: { ...local.recovery, boundary: local.recovery.boundary + base } } : {}),
-    } : undefined;
+    };
+    this.lastRegionHit = { uri: document.uri.toString(), version: document.version, region };
+    return region;
   }
 
   private mathScanOptions(
@@ -902,6 +1017,25 @@ export class PreviewController implements vscode.Disposable {
     cache.version = event.document.version;
   }
 
+  /** 方向只看 silkMath.previewPosition，默认 below。 */
+  private previewPlacement(
+    editor: vscode.TextEditor,
+    startLine: number,
+    endLine: number,
+    previewHeightPx: number,
+    metrics: EditorMetrics,
+  ): PreviewPlacement {
+    return resolvePreviewPlacement({
+      preferred: this.settings.previewPosition,
+      formulaStartLine: startLine,
+      formulaEndLine: endLine,
+      documentLineCount: editor.document.lineCount,
+      previewHeightPx,
+      lineHeightPx: metrics.lineHeightPx,
+      clipOverflow: isNotebookCellDocument(editor.document),
+    });
+  }
+
   private applyDecoration(
     editor: vscode.TextEditor,
     region: MathRegion,
@@ -913,7 +1047,7 @@ export class PreviewController implements vscode.Disposable {
     const startLine = editor.document.positionAt(region.start).line;
     const endLine = editor.document.positionAt(region.end).line;
     const visible = visibleLineSpan(editor);
-    const placement = this.settings.previewPosition;
+    const placement = this.previewPlacement(editor, startLine, endLine, rendered.heightPx, metrics);
     const anchor = resolvePreviewAnchor({
       formulaStartLine: startLine,
       formulaEndLine: endLine,
@@ -921,7 +1055,28 @@ export class PreviewController implements vscode.Disposable {
       visibleEndLine: visible.end,
       placement,
     });
-    const signature = `${renderKey}|${region.start}|${region.end}|${anchor.anchorLine}|${themeVariant}|${placement}`;
+    const formulaStart = editor.document.positionAt(region.start);
+    const formulaEnd = editor.document.positionAt(region.end);
+    const columns = this.previewColumns(editor, formulaStart, formulaEnd, anchor.anchorLine);
+    const visibleHeightPx = Math.max(1, visible.end - visible.start + 1) * metrics.lineHeightPx;
+    const notebook = isNotebookCellDocument(editor.document);
+    // notebook 格子会裁溢出。撑高当前行后预览整块留在格内，不要再按半格高度截断。
+    const maxHeightPx = notebook
+      ? 0
+      : Math.max(metrics.lineHeightPx * 6, Math.round(visibleHeightPx * 0.5));
+    const horizontal = resolvePreviewHorizontalLayout({
+      previewWidthPx: rendered.widthPx,
+      previewHeightPx: rendered.heightPx,
+      startColumn: columns.start,
+      endColumn: columns.end,
+      fontSizePx: metrics.fontSizePx,
+      viewportWidthPx: this.estimateViewportWidthPx(editor, metrics),
+      maxHeightPx,
+    });
+    const spacerPx = notebook && placement === 'below'
+      ? notebookPreviewSpacerPx(horizontal.boxHeightPx, metrics.lineHeightPx)
+      : 0;
+    const signature = `${renderKey}|${region.start}|${region.end}|${anchor.anchorLine}|${formulaStart.character}|${horizontal.leftPx}|${horizontal.boxWidthPx}|${themeVariant}|${placement}|s${spacerPx}`;
     if (signature === this.lastDecorationSignature && this.activePreview?.editor === editor) {
       // 内容和位置都没变，重设 decoration 只会让 VS Code 重新解码一次 SVG。
       return;
@@ -933,6 +1088,11 @@ export class PreviewController implements vscode.Disposable {
       lineSpan: anchor.lineSpan,
       placement,
       theme: themeVariant,
+      leftPx: horizontal.leftPx,
+      boxWidthPx: horizontal.boxWidthPx,
+      boxHeightPx: horizontal.boxHeightPx,
+      overflowX: horizontal.overflowX,
+      overflowY: horizontal.overflowY,
     });
     const attachment: vscode.ThemableDecorationAttachmentRenderOptions = {
       contentIconPath: rendered.uri,
@@ -949,21 +1109,91 @@ export class PreviewController implements vscode.Disposable {
         : {}),
       textDecoration: layout.textDecoration,
     };
-    const anchorStart = editor.document.lineAt(anchor.anchorLine).range.start;
-    const regionEnd = editor.document.positionAt(region.end);
-    const range = regionEnd.isBeforeOrEqual(anchorStart)
-      ? editor.document.lineAt(anchor.anchorLine).range
-      : new vscode.Range(anchorStart, regionEnd);
+    const range = this.previewDecorationRange(editor, region, anchor.anchorLine);
+    const spacer = spacerPx > 0
+      ? {
+        after: {
+          contentText: '\u00a0',
+          width: '0px',
+          height: `${spacerPx}px`,
+          margin: '0',
+          textDecoration: notebookPreviewSpacerCss(spacerPx),
+        },
+      }
+      : {};
     // 不挂 hoverMessage：鼠标扫过公式时不该弹出带关闭按钮的 hover 面板。
     editor.setDecorations(this.decoration, [{
       range,
       // 锚在视口内的公式行：首行滚出屏幕后 VS Code 不会再画那一行的 decoration。
-      renderOptions: { before: attachment },
+      renderOptions: { before: attachment, ...spacer },
     }]);
     this.lastDecorationSignature = signature;
-    this.lastPaint = { editor, region, rendered, metrics, renderKey };
+    const overlay = previewOverlayOccupiedLines({
+      formulaStartLine: startLine,
+      formulaEndLine: endLine,
+      anchorLine: anchor.anchorLine,
+      placement,
+      previewHeightPx: horizontal.boxHeightPx,
+      lineHeightPx: metrics.lineHeightPx,
+    });
+    this.lastPaint = {
+      editor,
+      region,
+      rendered,
+      metrics,
+      renderKey,
+      overlayStartLine: overlay.start,
+      overlayEndLine: overlay.end,
+    };
     this.activePreview = { editor, region };
     this.setPreviewVisible(true);
+  }
+
+  private previewDecorationRange(
+    editor: vscode.TextEditor,
+    region: MathRegion,
+    anchorLine: number,
+  ): vscode.Range {
+    const formulaStart = editor.document.positionAt(region.start);
+    const formulaEnd = editor.document.positionAt(region.end);
+    const start = resolvePreviewRangeStart({
+      formulaStartLine: formulaStart.line,
+      formulaStartCharacter: formulaStart.character,
+      anchorLine,
+    });
+    const rangeStart = new vscode.Position(start.line, start.character);
+    if (formulaEnd.isBeforeOrEqual(rangeStart)) {
+      return editor.document.lineAt(anchorLine).range;
+    }
+    return new vscode.Range(rangeStart, formulaEnd);
+  }
+
+  private previewColumns(
+    editor: vscode.TextEditor,
+    formulaStart: vscode.Position,
+    formulaEnd: vscode.Position,
+    anchorLine: number,
+  ): { readonly start: number; readonly end: number } {
+    const lineText = editor.document.lineAt(anchorLine).text;
+    const tabSize = Number(editor.options.tabSize);
+    if (formulaStart.line !== anchorLine) {
+      return { start: 0, end: visibleColumnOf(lineText, lineText.length, tabSize) };
+    }
+    const start = visibleColumnOf(lineText, formulaStart.character, tabSize);
+    const endCharacter = formulaEnd.line === anchorLine ? formulaEnd.character : lineText.length;
+    const end = visibleColumnOf(lineText, endCharacter, tabSize);
+    return { start, end: Math.max(start, end) };
+  }
+
+  private estimateViewportWidthPx(editor: vscode.TextEditor, metrics: EditorMetrics): number {
+    const config = vscode.workspace.getConfiguration('editor', editor.document);
+    const wrap = config.get<string>('wordWrap', 'off');
+    const wrapColumn = config.get<number>('wordWrapColumn', 80);
+    const charWidth = metrics.fontSizePx * MONO_CHAR_WIDTH_RATIO;
+    if (wrap === 'wordWrapColumn' || wrap === 'bounded') {
+      return Math.max(240, Math.round(Math.max(1, wrapColumn) * charWidth));
+    }
+    return Math.max(480, Math.round(120 * charWidth));
   }
 
   private emitFrame(
@@ -986,6 +1216,7 @@ export class PreviewController implements vscode.Disposable {
     editor.setDecorations(this.decoration, []);
     this.lastDecorationSignature = undefined;
     if (this.lastPaint?.editor === editor) this.lastPaint = undefined;
+    if (this.lastRegionHit?.uri === editor.document.uri.toString()) this.lastRegionHit = undefined;
     if (this.activePreview?.editor === editor) {
       this.activePreview = undefined;
       this.setPreviewVisible(false);
@@ -1003,6 +1234,7 @@ export class PreviewController implements vscode.Disposable {
     for (const editor of vscode.window.visibleTextEditors) editor.setDecorations(this.decoration, []);
     this.lastDecorationSignature = undefined;
     this.lastPaint = undefined;
+    this.lastRegionHit = undefined;
     this.activePreview = undefined;
     this.setPreviewVisible(false);
   }

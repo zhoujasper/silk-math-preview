@@ -4,7 +4,6 @@ import { DefinitionWorkspace } from './vscode/definitionWorkspace';
 import { registerLanguageFeatures } from './vscode/languageFeatures';
 import { OcrController } from './vscode/ocrController';
 import { PreviewController } from './vscode/previewController';
-import { ControlPanelProvider } from './vscode/controlPanel';
 import { StatusController } from './vscode/statusController';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -18,13 +17,6 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
   );
   const ocr = new OcrController(context, preview);
-  const panel = new ControlPanelProvider(status, {
-    reloadDefinitions: () => {
-      definitions.reload();
-      preview.refresh();
-    },
-    diagnose: () => preview.diagnose(),
-  });
 
   context.subscriptions.push(
     output,
@@ -32,12 +24,6 @@ export function activate(context: vscode.ExtensionContext): void {
     status,
     preview,
     ocr,
-    panel,
-    preview.onDidRender((frame) => panel.update(frame)),
-    vscode.window.registerWebviewViewProvider(ControlPanelProvider.viewType, panel, {
-      webviewOptions: { retainContextWhenHidden: false },
-    }),
-    vscode.commands.registerCommand('silkMath.togglePanel', () => panel.toggle()),
     vscode.commands.registerCommand('silkMath.togglePreview', () => {
       const enabled = preview.toggle();
       void vscode.window.showInformationMessage(`Silk Math 实时预览已${enabled ? '开启' : '暂停'}。`);

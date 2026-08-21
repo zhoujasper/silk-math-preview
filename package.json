@@ -1,12 +1,12 @@
 {
   "name": "silk-math-preview",
   "displayName": "Silk Math Preview",
-  "description": "光标走到哪，公式就在哪渲染。Live math preview that follows your caret.",
-  "version": "0.1.24",
+  "description": "Live math preview that follows your caret. 光标走到哪，公式就在哪渲染。",
+  "version": "0.1.67",
   "publisher": "silkmath",
   "author": {
-    "name": "Jasper",
-    "url": "https://github.com/zhoujasper"
+    "name": "Jasper Zhou",
+    "url": "https://zhoujasper.github.io"
   },
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -14,7 +14,7 @@
     "theme": "dark"
   },
   "license": "MIT",
-  "private": true,
+  "private": false,
   "repository": {
     "type": "git",
     "url": "https://github.com/zhoujasper/silk-math-preview.git"
@@ -22,7 +22,7 @@
   "bugs": {
     "url": "https://github.com/zhoujasper/silk-math-preview/issues"
   },
-  "homepage": "https://github.com/zhoujasper/silk-math-preview#readme",
+  "homepage": "https://zhoujasper.github.io",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -58,7 +58,8 @@
     "onCommand:silkMath.dismissPreview",
     "onCommand:silkMath.reloadDefinitions",
     "onCommand:silkMath.showPerformance",
-    "onCommand:silkMath.ocr.capture"
+    "onCommand:silkMath.ocr.capture",
+    "onCommand:silkMath.revealFlyout"
   ],
   "contributes": {
     "commands": [
@@ -84,6 +85,14 @@
         "title": "Silk Math: 打开状态栏菜单 / Open Status Menu"
       },
       {
+        "command": "silkMath.revealFlyout",
+        "title": "Silk Math: 打开设置卡片 / Open Settings Flyout"
+      },
+      {
+        "command": "silkMath.dismissFlyout",
+        "title": "Silk Math: 关闭设置卡片 / Dismiss Settings Flyout"
+      },
+      {
         "command": "silkMath.increasePreviewScale",
         "title": "Silk Math: 放大预览 / Increase Preview Size"
       },
@@ -96,12 +105,28 @@
         "title": "Silk Math: 恢复默认预览大小 / Reset Preview Size"
       },
       {
-        "command": "silkMath.diagnoseFormula",
-        "title": "Silk Math: 诊断当前公式 / Diagnose Formula at Caret"
+        "command": "silkMath.toggleLanguage",
+        "title": "Silk Math: 切换文件类型预览 / Toggle Language Preview"
       },
       {
-        "command": "silkMath.togglePanel",
-        "title": "Silk Math: 打开设置卡片 / Toggle Settings Card"
+        "command": "silkMath.togglePreviewDefinitions",
+        "title": "Silk Math: 切换定义预览 / Toggle Definition Preview"
+      },
+      {
+        "command": "silkMath.toggleExcludeFile",
+        "title": "Silk Math: 排除或恢复当前文件 / Toggle Exclude Current File"
+      },
+      {
+        "command": "silkMath.snooze",
+        "title": "Silk Math: 暂停预览 / Snooze Preview"
+      },
+      {
+        "command": "silkMath.openSettings",
+        "title": "Silk Math: 打开设置 / Open Settings"
+      },
+      {
+        "command": "silkMath.diagnoseFormula",
+        "title": "Silk Math: 诊断当前公式 / Diagnose Formula at Caret"
       }
     ],
     "keybindings": [
@@ -114,12 +139,12 @@
       {
         "command": "silkMath.dismissPreview",
         "key": "escape",
-        "when": "editorTextFocus && silkMath.previewVisible"
+        "when": "editorTextFocus && silkMath.previewVisible && !silkMath.flyoutVisible"
       },
       {
-        "command": "silkMath.togglePanel",
+        "command": "silkMath.dismissFlyout",
         "key": "escape",
-        "when": "silkMath.flyoutVisible && !editorTextFocus"
+        "when": "silkMath.flyoutVisible"
       }
     ],
     "configuration": {
@@ -167,10 +192,10 @@
         },
         "silkMath.previewScale": {
           "type": "number",
-          "default": 1.4,
+          "default": 1.35,
           "minimum": 0.5,
           "maximum": 3,
-          "description": "预览相对编辑器字号的缩放。默认 1.4（界面显示为 100%）。Preview scale relative to the editor font; default 1.4 is shown as 100%."
+          "description": "预览相对编辑器字号的缩放。默认 1.35（界面显示为 100%）。Preview scale relative to the editor font; default 1.35 is shown as 100%."
         },
         "silkMath.trace": {
           "type": "boolean",
@@ -186,6 +211,11 @@
           "type": "boolean",
           "default": true,
           "description": "公式始终无法渲染时在浮层里显示原因，而不是什么都不显示。Show the reason in the floating panel when a formula never renders, instead of showing nothing."
+        },
+        "silkMath.previewDefinitions": {
+          "type": "boolean",
+          "default": false,
+          "description": "仅含 \\def / \\newcommand / \\renewcommand 的公式默认不预览。打开后会把刚定义的命令展开画出来。Skip definition-only formulas by default; when enabled, render a sample of each newly defined command."
         },
         "silkMath.showCaret": {
           "type": "boolean",
@@ -225,25 +255,6 @@
           "description": "在状态栏菜单中显示按需安装的本地截图公式/文字识别入口。Show the on-demand local screenshot OCR entry in the Silk Math status menu."
         }
       }
-    },
-    "viewsContainers": {
-      "secondarySidebar": [
-        {
-          "id": "silkMath",
-          "title": "Silk Math",
-          "icon": "resources/panel-icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "silkMath": [
-        {
-          "type": "webview",
-          "id": "silkMath.controlPanel",
-          "name": "Silk Math",
-          "visibility": "hidden"
-        }
-      ]
     }
   },
   "scripts": {

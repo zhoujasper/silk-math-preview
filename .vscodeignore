@@ -1,3 +1,6 @@
+.tmp-copilot-chat/**
+.tmp-scan.py
+.tmp*
 .github/**
 .vscode/**
 .gitignore

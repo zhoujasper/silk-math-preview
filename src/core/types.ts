@@ -12,7 +12,8 @@ export type MathRegionKind =
   | 'dollar-display'
   | 'paren-inline'
   | 'bracket-display'
-  | 'environment';
+  | 'environment'
+  | 'markdown-table';
 
 export type MathRecoveryReason =
   | 'unclosed-inline-delimiter'

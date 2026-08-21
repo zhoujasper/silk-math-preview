@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { DefinitionIndex, type DefinitionSourceInput } from '../core/definitionIndex.js';
 import type { ParsedDefinition } from '../core/definitionParser.js';
 import { environmentEntersMathMode, parseDefinitions } from '../core/definitionParser.js';
+import { sanitizeEnvironmentBodyForMathJax } from '../core/previewExpression.js';
 import type { ParsedDependency } from '../core/dependencyParser.js';
 import { parseDependencies } from '../core/dependencyParser.js';
 import { parseMarkdownDefinitionSource, parseNotebookDefinitionSources } from '../core/markdownDefinitions.js';
@@ -484,7 +485,7 @@ function serializeDefinition(definition: ParsedDefinition): string | undefined {
   const count = definition.arguments.length > 0 ? `[${definition.arguments.length}]` : '';
   const defaultValue = optional[0]?.defaultValue;
   const optionalDefault = defaultValue === undefined ? '' : `[${defaultValue}]`;
-  return `\\${operation}{${definition.name}}${count}${optionalDefault}{${definition.beginReplacement}}{${definition.endReplacement}}`;
+  return `\\${operation}{${definition.name}}${count}${optionalDefault}{${sanitizeEnvironmentBodyForMathJax(definition.beginReplacement)}}{${sanitizeEnvironmentBodyForMathJax(definition.endReplacement)}}`;
 }
 
 function splitOnce(value: string, separator: string): readonly [string, string] {

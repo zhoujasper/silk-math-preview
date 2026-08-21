@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DOMParser } from '@xmldom/xmldom';
 
-import { extractRootSvg, MathJaxSvgRenderer, sanitizeStandaloneSvg } from '../src/render/mathjaxRenderer';
+import {
+  extractRootSvg,
+  flattenInnerSvgs,
+  MathJaxSvgRenderer,
+  sanitizeStandaloneSvg,
+} from '../src/render/mathjaxRenderer';
 import { scanMathRegions } from '../src/core/mathScanner';
-import { buildPreviewExpression } from '../src/core/previewExpression';
+import { buildPreviewExpression, sanitizeEnvironmentBodyForMathJax } from '../src/core/previewExpression';
 
 const options = {
   displayMode: true,
@@ -85,6 +90,30 @@ describe('MathJaxSvgRenderer', () => {
       expect(result.widthPx).toBeGreaterThan(5);
       expectValidSvg(result.svg);
     }
+    renderer.clear();
+  });
+
+  it('cls 里用 equation 包一层的自定义环境也能预览', () => {
+    // 回归：`eqmath` 定义为 `\begin{equation}...\end{equation}` 时，预览已在数学模式，
+    // 再展开会报 “Erroneous nesting of equation structures”。
+    const source = '\\begin{eqmath}\n  \\clsOnly{X} = \\Ocal(h^2)\n\\end{eqmath}';
+    const region = scanMathRegions(source, { customMathEnvironments: ['eqmath'] }).regions[0]!;
+    const expression = buildPreviewExpression(source, region, source.indexOf('clsOnly') + 2, false).expression;
+    const begin = sanitizeEnvironmentBodyForMathJax(String.raw`\begin{equation}`);
+    const end = sanitizeEnvironmentBodyForMathJax(String.raw`\end{equation}`);
+    const renderer = new MathJaxSvgRenderer();
+    const result = renderer.render({
+      ...options,
+      definitionPrelude: [
+        `\\newenvironment{eqmath}{${begin}}{${end}}`,
+        String.raw`\def\clsOnly#1{\mathsf{#1}}`,
+        String.raw`\def\Ocal{\mathcal{O}}`,
+      ].join('\n'),
+      expression,
+    });
+    expect(result.svg).toContain('<svg');
+    expect(result.widthPx).toBeGreaterThan(5);
+    expectValidSvg(result.svg);
     renderer.clear();
   });
 
@@ -247,18 +276,56 @@ describe('MathJaxSvgRenderer', () => {
     expect(extracted.endsWith('</svg>')).toBe(true);
     expect((extracted.match(/<\/svg>/g) ?? []).length).toBe(2);
 
+    const flattened = flattenInnerSvgs(extracted);
+    expect((flattened.match(/<svg\b/g) ?? []).length).toBe(1);
+    expect(flattened).toContain('<g class="inner"');
+    expect(flattened).toContain('data-c="after"');
+
+    const extender = flattenInnerSvgs(
+      '<svg><g><svg x="380" y="-70" width="5792.4" height="260" viewBox="1448.1 -70 5792.4 260"><path data-c="E154" d="M-10 0L410 0L410 120L-10 120Z" transform="scale(21.722,1)"></path></svg></g></svg>',
+    );
+    expect(extender).not.toContain('clip-path');
+    expect(extender).not.toContain('scale(21.722');
+    expect(extender).toContain('data-c="E154"');
+    expect(extender).toMatch(/M380 0H6172\.4V120H380Z/);
+
     const renderer = new MathJaxSvgRenderer();
     const underbrace = renderer.render({
       ...options,
       definitionPrelude: '',
       expression: String.raw`\tau^n_m=\underbrace{(u_t)^{n+1}_m}_{=0 \text{ by the PDE}}+\mathcal{O}(\Delta t)`,
     });
-    expect((underbrace.svg.match(/<svg\b/g) ?? []).length).toBeGreaterThan(1);
+    expect((underbrace.svg.match(/<svg\b/g) ?? []).length).toBe(1);
+    expect(underbrace.svg).not.toContain('clip-path="url(#');
     expect(underbrace.svg).toContain('data-c="1D70F"');
     expect(underbrace.svg).toMatch(/data-c="1D4[A-F0-9]{2}"/);
+    expect(underbrace.svg).toContain('data-c="E154"');
     expect(underbrace.widthPx).toBeGreaterThan(40);
     expect(underbrace.heightPx).toBeGreaterThan(10);
     expectValidSvg(underbrace.svg);
+
+    const simple = renderer.render({
+      ...options,
+      definitionPrelude: '',
+      expression: 'x+1',
+    });
+    const simpleBox = /viewBox="([^"]+)"/.exec(simple.svg)?.[1]?.split(/\s+/).map(Number) ?? [];
+    expect(simpleBox[0]!).toBeGreaterThan(-100);
+
+    const longUnderbrace = renderer.render({
+      ...options,
+      definitionPrelude: '',
+      scale: 1.35,
+      expression: String.raw`\tau^n_m = \underbrace{(u_t)^{n+1}_m + \gamma (u_{xxxx})^{n+1}_m + \beta u^{n+1}_m}_{=0 \text{ by the PDE}} + \mathcal{O}(\Delta t) + \mathcal{O}((\Delta x)^2) = \mathcal{O}(\Delta t) + \mathcal{O}((\Delta x)^2)`,
+    });
+    expect((longUnderbrace.svg.match(/<svg\b/g) ?? []).length).toBe(1);
+    expect(longUnderbrace.svg).not.toContain('clip-path="url(#');
+    expect(longUnderbrace.svg).not.toMatch(/scale\(21\./);
+    expect((longUnderbrace.svg.match(/data-c="E154"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(longUnderbrace.svg).toContain('data-c="3D"');
+    expect(longUnderbrace.svg).toContain('data-c="62"');
+    expect(longUnderbrace.heightPx).toBeGreaterThan(simple.heightPx);
+    expectValidSvg(longUnderbrace.svg);
 
     const sqrt = renderer.render({
       ...options,
@@ -267,6 +334,59 @@ describe('MathJaxSvgRenderer', () => {
     });
     expect(sqrt.svg).toContain('<path');
     expectValidSvg(sqrt.svg);
+    renderer.clear();
+  });
+
+  it('带框线的表格不会把整张表涂成实心色块', () => {
+    // 回归：`tabular{|c|c|c|}` 的 frame 是一张铺满表格的 rect。
+    // MathJax 靠 stylesheet 设 fill:none；我们剥掉外部 CSS 后，
+    // `svg{fill:currentColor}` 会把它涂成一坨浅色，深色主题里就像白板。
+    const source = String.raw`\begin{tabular}{|c|c|c|}
+\hline
+A & B & C \\
+\hline
+1 & 2 & 3 \\
+\hline
+\end{tabular}`;
+    const region = scanMathRegions(source).regions[0]!;
+    const expression = buildPreviewExpression(source, region, source.indexOf('A'), false).expression;
+    const renderer = new MathJaxSvgRenderer();
+    const result = renderer.render({ ...options, definitionPrelude: '', expression });
+    const frame = /<rect\b[^>]*data-frame="true"[^>]*>/i.exec(result.svg)?.[0];
+    expect(frame).toBeDefined();
+    expect(frame).toMatch(/fill="none"/i);
+    expect(frame).toMatch(/stroke="currentColor"/i);
+    expect(frame).toMatch(/stroke-width="70"/);
+    expect(result.svg).toMatch(/<rect\b[^>]*data-line="v"[^>]*width="70"/i);
+    expect(result.svg).not.toMatch(/<line\b/i);
+    expect(result.svg).toContain('data-c="41');
+    expectValidSvg(result.svg);
+    renderer.clear();
+  });
+
+  it('列格式里的竖线会画成有宽度的矩形，不会在图片里丢线', () => {
+    // 回归：`{cc|c}` 只有列间竖线。MathJax 输出零宽度 `<line>`，
+    // VS Code 把 SVG 当 decoration 图片画时整根竖线光栅化丢掉。
+    const source = String.raw`\begin{tabular}{cc|c}
+\hline
+方法 & $L^2$ 误差 & 阶 \\
+\hline
+A & $1$ & $2$ \\
+\hline
+\end{tabular}`;
+    const region = scanMathRegions(source).regions[0]!;
+    const expression = buildPreviewExpression(source, region, source.indexOf('方法'), false).expression;
+    expect(expression).toContain('{cc|c}');
+    const renderer = new MathJaxSvgRenderer();
+    const result = renderer.render({ ...options, definitionPrelude: '', expression });
+    const vertical = /<rect\b[^>]*data-line="v"[^>]*>/i.exec(result.svg)?.[0];
+    expect(vertical).toBeDefined();
+    const width = Number(/width="([^"]+)"/i.exec(vertical ?? '')?.[1]);
+    const x = Number(/\bx="([^"]+)"/i.exec(vertical ?? '')?.[1]);
+    const viewBox = /viewBox="([^"]+)"/.exec(result.svg)?.[1]?.split(/\s+/).map(Number) ?? [];
+    expect(width).toBeGreaterThan(1);
+    expect(x).toBeGreaterThan((viewBox[2] ?? 0) * 0.4);
+    expectValidSvg(result.svg);
     renderer.clear();
   });
 

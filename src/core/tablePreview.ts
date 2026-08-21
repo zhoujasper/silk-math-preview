@@ -1,3 +1,5 @@
+import { ensureCaretInMath } from './markdownTable';
+
 /**
  * 表格环境不是数学环境，MathJax 也没有 `tabular`/`longtable`。
  * 这里把常见表格源码翻译成 MathJax 能渲染的 `array`：列格式归一化、
@@ -29,6 +31,11 @@ const MAX_COLUMN_REPEAT = 64;
 
 export function isTableEnvironment(name: string | undefined): boolean {
   return name !== undefined && TABLE_ENVIRONMENT_SET.has(name);
+}
+
+/** LaTeX tabular 与 Markdown GFM 表格都走 array 预览。 */
+export function isTablePreviewRegion(region: { readonly kind?: string; readonly environment?: string }): boolean {
+  return region.kind === 'markdown-table' || isTableEnvironment(region.environment);
 }
 
 function isEscaped(text: string, offset: number): boolean {
@@ -323,7 +330,7 @@ function splitTopLevel(text: string, separator: '\\\\' | '&'): string[] {
 
 function wrapText(text: string): string {
   const trimmed = text.trim();
-  return trimmed ? `\\text{${trimmed}}` : '';
+  return trimmed ? `\\text{${ensureCaretInMath(trimmed)}}` : '';
 }
 
 /** 把 `\makecell{上\\下}` 这类命令展开成单元格内的纵向 array。 */

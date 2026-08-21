@@ -1,5 +1,315 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-21 GitHub 与 Marketplace（0.1.67）
+
+- 作者 Jasper Zhou，https://zhoujasper.github.io ；仓库
+  https://github.com/zhoujasper/silk-math-preview 。Marketplace 发布者 ID
+  必须是 `silkmath`。步骤在 `docs/PUBLISH.md`。
+
+## 2026-08-21 改回顶部 QuickPick（0.1.67）
+
+- 点 Silk Math 打开顶部 QuickPick，勾选留在菜单里立刻变。不再用
+  状态栏 Markdown hover 当点击入口。
+- 0.1.67：`silk-math-preview-0.1.67.vsix` 1,196,438 bytes，
+  SHA-256 `4E67069AD157F2EB90DD178BC4A32B03D148124C3E8A5E7CC70ACC30F30B294E`。
+
+## 2026-08-21 Copilot 活 DOM vs locked hover（0.1.66）
+
+- Copilot 状态栏卡片是内核 HTMLElement + ShowTooltipCommand 对象，勾选改
+  同一个 Toggle。扩展 Markdown hover 在 isLocked 时改 tooltip 会拆掉旧浮层
+  却画不出新的。0.1.66 两次写入不同 revision 的 markdown 再补 showHover。
+- 0.1.66：`silk-math-preview-0.1.66.vsix` 1,198,013 bytes，
+  SHA-256 `FFEE6434B9ADEA9019A927201A617B3D20B285B07EF040FDD474AB1DD5777E47`。
+
+## 2026-08-21 闪了但勾选不变（0.1.65）
+
+- `configuration.update()` 返回后 `get()` 仍可能是旧值，重开 hover 画出旧勾选。
+  点选先写入 pending，卡片按 pending 画，配置异步落盘。
+- 0.1.65：`silk-math-preview-0.1.65.vsix` 1,197,788 bytes，
+  SHA-256 `9BA32A92047211545E830A5468F5F7DD024D1F3CAB215532325E97B422D9F4C0`。
+
+## 2026-08-21 isTrusted 白名单静默吞点击（0.1.64）
+
+- `{ enabledCommands }` 让 opener 用 includes(uri.path)，对不上就 return true
+  不执行。必须 `isTrusted: true`。UI 用 markdown command 链接 + 主题色 span。
+- 0.1.64：`silk-math-preview-0.1.64.vsix` 1,197,326 bytes，
+  SHA-256 `05B57CA38CD5C7F6FA735ECF4D07E1E58C0F167C0345B5897CD7EEB121DDD135`。
+
+## 2026-08-21 command 链接被内核拆掉（0.1.63）
+
+- HTML 表格里的 command href 不是 markdown link，点了没闪。改成
+  `[text](command:id)`，命令写入 package.json，isTrusted.enabledCommands 放行。
+- 0.1.63：`silk-math-preview-0.1.63.vsix` 1,197,033 bytes，
+  SHA-256 `2C02446A235917F343251DF70137000ED658C0DB4E0EA76C4DC8D4ADA1349CF0`。
+
+## 2026-08-21 点选后立刻重开 hover（0.1.62）
+
+- locked hover 改 tooltip 不会原地重绘。清掉 tooltip 让内核把焦点交回条目，
+  再写新内容并 showHover 两次。不要 focusStatusBar。
+- 0.1.62：`silk-math-preview-0.1.62.vsix` 1,196,986 bytes，
+  SHA-256 `0CD901EC67F171FBD96DE7BC392B85E551B4D7A28EF085D02677D5F9AF7F06FE`。
+
+## 2026-08-21 Copilot Chat VSIX：悬浮窗是内核 hover（0.1.61）
+
+- 拆开 github.copilot-chat-0.48.1.vsix：大卡片是内核 ShowTooltipCommand +
+  HTMLElement。插件只 createChatStatusItem 塞 Index/Sync。扩展公开做法是
+  showHover + MarkdownString。撤掉右侧栏。点选后空 tooltip 再 showHover，
+  不要 focusStatusBar。
+- 0.1.61：`silk-math-preview-0.1.61.vsix` 1,196,864 bytes，
+  SHA-256 `4639865AB7AFAE5AE364171A347CC7B87CC7B905FD98EBFA7E1400C4A7462895`。
+
+## 2026-08-21 Copilot 源码对照：点选立刻刷新（0.1.60）
+
+- Copilot 卡片是内核 HTMLElement + ShowTooltipCommand，扩展做不到。Markdown
+  sticky hover 一点就锁死、改 tooltip 等于拆掉浮层。改成右侧辅助栏 webview，
+  勾选立刻变，不开编辑器标签、不下方面板。
+- 0.1.60：`silk-math-preview-0.1.60.vsix` 1,198,712 bytes，
+  SHA-256 `0F0E3DED1AAEB384F558E84D0B4E662C595C71DAC0B4E35B98C29ECCC09E0C3A`。
+
+## 2026-08-21 推迟按钮和点选刷新（0.1.59）
+
+- 推迟：次级按钮色文字芯片。加减重置无底无边。点选后冲空 tooltip 再 showHover。
+- 0.1.59：`silk-math-preview-0.1.59.vsix` 1,196,303 bytes，
+  SHA-256 `9F47551C6F62A0C22ABDF2D69E0D11E903D7752DF04BFB0075CBA151E2890304`。
+
+## 2026-08-21 点 Silk Math 不再开编辑器标签（0.1.58）
+
+- Webview panel 会变成新标签。Copilot 是状态栏 hover。改回 showHover + Markdown。
+  推迟按钮 SVG 带边框/浅底/圆角。zh* 中文，其余英文。
+- 0.1.58：`silk-math-preview-0.1.58.vsix` 1,196,393 bytes，
+  SHA-256 `62D506B35CFB8BA7CDB1D475E6A56E426688212D2BCF1B8519090600A35A3447`。
+
+## 2026-08-21 Jupyter 多行公式下半截被裁（0.1.57）
+
+- 格子裁溢出 + 下一格盖住。预览仍在下方：用 after 撑高锚点行，不要翻到 above。
+- 0.1.57：`silk-math-preview-0.1.57.vsix` 1,197,511 bytes，
+  SHA-256 `BCC493454A8FB67358534BB5AFAA68B3C6613E61A3079DD885D4D9DF78A91B64`。
+
+## 2026-08-21 自绘 webview 卡片，勾选立刻变（0.1.56）
+
+- Markdown hover 做不到 Copilot 那种原地改 DOM。点 Silk Math 改为打开 webview
+  卡片，postMessage 立刻重绘。勾选无蓝底，齿轮在右上角，底部是排除按钮。
+- 0.1.56：`silk-math-preview-0.1.56.vsix` 1,197,170 bytes，
+  SHA-256 `BE09C8782E895C711E9C36194EAAD00EC598BB477C40750C7E88A607E774B340`。
+
+## 2026-08-21 勾选立刻刷新、推迟并排、上下留白（0.1.55）
+
+- 点勾选后必须先单独冲空 tooltip（暂停其它 refresh，等 IPC），否则 ExtHost
+  会把清空合并掉，sticky hover 一直显示旧内容。
+- 卡片 360px，推迟左右并排，顶少底多。
+- 0.1.55：`silk-math-preview-0.1.55.vsix` 1,195,617 bytes，
+  SHA-256 `12D70E0C6BA13E38CB65E68F6A6CF0CBFA12E088A2C8272DB559185DC4A84CCB`。
+
+## 2026-08-21 状态栏卡片加宽、次级按钮、点了立刻刷新（0.1.54）
+
+- 点开的 hover 是 sticky/locked，改 tooltip 不会重绘。先清空再写回，然后
+  `focusStatusBar` + `showHover`。卡片 400px，勾选自绘方框，按钮用次级按钮色。
+- 0.1.54：`silk-math-preview-0.1.54.vsix` 1,195,440 bytes，
+  SHA-256 `421AF6F66543099BA8A3C13EEDE965AF54DAF7DE484C6D6867F989C8DEB88E86`。
+
+## 2026-08-21 状态栏卡片 Copilot 勾选布局（0.1.53）
+
+- 标签不要做成 markdown 链接（会变蓝）。勾选框在左，点了用 revision 刷新 hover。
+- 0.1.53：`silk-math-preview-0.1.53.vsix` 1,194,549 bytes，
+  SHA-256 `581F765198473009A3F6F71D348C786845009C85484F664E28087C76C63E7353`。
+
+## 2026-08-21 表格文本格光标渲染成源码（0.1.52）
+
+- 表内 caret 是否文本模式必须按当前单元格数 `$`，不能整表累计。
+- 0.1.52：`silk-math-preview-0.1.52.vsix` 1,194,416 bytes，
+  SHA-256 `B1187A35E7D9D6DD7F1B509BFE744176DB641071750A809892C287639EB1BA18`。
+
+## 2026-08-21 滚动条拖动不再关掉预览（0.1.51）
+
+- 拖滚动条会改选区到浮层下面的源码行，不能当成离开公式。细滚动条、轨道透明。
+- 0.1.51：`silk-math-preview-0.1.51.vsix` 1,193,950 bytes，
+  SHA-256 `3A84A46BC879B104324A94AC41111DB13DE27ADC9026D247940628143B18F4F0`。
+
+## 2026-08-21 预览对准公式正下方居中（0.1.50）
+
+- 同一行多个 `$...$` 时，预览必须对准当前公式中心，不能贴行首。
+- 0.1.50：`silk-math-preview-0.1.50.vsix` 1,193,611 bytes，
+  SHA-256 `D35B694956A69B26EE6EE752F6CD61246852F910EB20ED63FBA1557D2FA121C4`。
+
+## 2026-08-21 Copilot 同款状态栏点击卡片（0.1.49）
+
+- Copilot 用内核 `ShowTooltipCommand`（对象身份）+ HTMLElement tooltip。
+  扩展做不到。公开替代：`command = workbench.action.showHover` + MarkdownString tooltip。
+- 不要再用 editor decoration 冒充状态栏浮层：点状态栏时常没有编辑器。
+- 0.1.49：`silk-math-preview-0.1.49.vsix` 1,193,251 bytes，
+  SHA-256 `4D7D378BC7DCB6F88575502DBFF5A006D1297F1970568EDE23BACE5A2267436D`。
+
+## 2026-08-21 列竖线画不出来（0.1.48）
+
+- `{cc|c}` 的列间竖线是零宽度 `<line>`，独立 SVG 图片会丢掉。改成细矩形。
+- 0.1.48：`silk-math-preview-0.1.48.vsix` 1,195,020 bytes，
+  SHA-256 `8F9460B48065F9D85A313B7FCC85E28D5D02BD489B1848D25A8861876CC75A9B`。
+
+## 2026-08-21 带框表格白色色块（0.1.47）
+
+- `{|c|c|c|}` + `\hline` 的 frame rect 必须 `fill="none"`，否则独立 SVG 会涂满前景色。
+- 0.1.47：`silk-math-preview-0.1.47.vsix` 1,194,787 bytes，
+  SHA-256 `C9CAAFAED650A8D2D5EAC8D448D85B64EF1B1B4CE6B5C594BC7EF889D7BD501E`。
+
+## 2026-08-21 自定义环境套 equation（0.1.46）
+
+- `eqmath` 这类环境在类文件里包 `\begin{equation}` 时，prelude 必须去壳/改 aligned。
+- 0.1.46：`silk-math-preview-0.1.46.vsix` 1,194,570 bytes，
+  SHA-256 `003A71D2988091C6E2CA0B28B7FE71AE7D0A13EB7F0C5EF6C175AC03712ABF8F`。
+
+## 2026-08-21 Markdown 行内代码点反引号也预览（0.1.45）
+
+- `` `$not math$` `` 命中范围扩到包裹的反引号；代码里夹着别的字则不扩。
+- 0.1.45：`silk-math-preview-0.1.45.vsix` 1,194,588 bytes，
+  SHA-256 `E4EBC9A9F18CF4CAB0FC80A52F1C6F3D15FBD085E7B8D81DDCB071ED48DEE2F2`。
+
+## 2026-08-21 Markdown 代码里的公式（0.1.44）
+
+- 行内代码和 fence 里的 `$` 要预览；定义解析继续跳过代码。
+- 0.1.44：`silk-math-preview-0.1.44.vsix` 1,194,383 bytes，
+  SHA-256 `3BF3B0729708C47E43834B04A85126970B870F2AD3B11D1B796F6D95C4680167`。
+
+## 2026-08-21 Markdown 表格框线（0.1.43）
+
+- array 列格式必须带 `|`，行间要 `\hline`，否则预览只有对齐文字没有表框。
+- 0.1.43：`silk-math-preview-0.1.43.vsix` 1,194,035 bytes，
+  SHA-256 `362C6C7C05B2B1E9A93F1C00FE4E29E10ED27AC1B8D0F12869A92E1A1F36D7AD`。
+
+## 2026-08-21 更新全部样例测试
+
+- fixtures 说明与扫掠对齐现行为。`eqmath` 用 aligned 才能在预览数学模式里嵌套。
+
+## 2026-08-21 Markdown 表公式竖线（0.1.42）
+
+- GFM 单元格里的 `|x|`、`|\nabla u|` 必须当数学绝对值，不能当列分隔。
+- 0.1.42：`silk-math-preview-0.1.42.vsix` 1,193,957 bytes，
+  SHA-256 `C1677153BFD1070168413285FB6708A76F457E4A66309B708F65BD1DFC52AE06`。
+
+## 2026-08-21 预览从公式往右排（0.1.41）
+
+- 锚在行首会让行内公式预览错位到左边。range 从公式起点开始。
+- 0.1.41：`silk-math-preview-0.1.41.vsix` 1,193,720 bytes，
+  SHA-256 `0095D8947AFFD0F57A6FD15FF64FD62E3A88F0A955C764A90C8718AD3B2CE38C`。
+
+## 2026-08-21 预览在下方（0.1.40）
+
+- Jupyter 自动翻到上方会盖住源码。默认始终 below。
+- 0.1.40：`silk-math-preview-0.1.40.vsix` 1,193,070 bytes，
+  SHA-256 `9EE14EEE9D8E9337951E5338E0A31283B0F26FCAA2563F1C96C5AA6756C8F124`。
+
+## 2026-08-21 去掉 Silk Math 左边图标（0.1.39）
+
+- 用户不要状态栏 `^ Silk Math`。点开后也不要额外的 − / + / 齿轮条目。
+- 0.1.39：`silk-math-preview-0.1.39.vsix` 1,193,106 bytes，
+  SHA-256 `1F49EBA059E5EE62D873179BC88EE11F4088A0110ED486F1D56B44DA4A124444`。
+
+## 2026-08-21 Jupyter 卡片错位（0.1.38）
+
+- 卡片在左上角且只露出下半截：锚在第一格最后一行，286px 往上溢出被裁。
+  改钉视口最下一格的右下角。
+- 0.1.38：`silk-math-preview-0.1.38.vsix` 1,193,307 bytes，
+  SHA-256 `7D402EFC4F56591B5197275146E09C50280CD2968BA943F03B9E0A389D32097E`。
+
+## 2026-08-21 纯定义公式（0.1.37）
+
+- 只有声明、没有排版内容：默认静默跳过。选项 `previewDefinitions` 才展开样例。
+- 0.1.37：`silk-math-preview-0.1.37.vsix` 1,193,008 bytes，
+  SHA-256 `629EA94BB17D15ED1F83F433972778CC3E5D19AB3DE41749912E584838E3370A`。
+
+## 2026-08-21 人工系统预览样例
+
+- `test/fixtures/all-math.{tex,md,txt,ipynb}` + `silkmath-fixture.{sty,cls}`。
+  打开后把光标放进每条公式。`.txt` 要先打开「其他文件类型」。
+
+## 2026-08-21 详情页与 GitHub 图标（0.1.36）
+
+- 商店卡片图标 ≠ README 正文。要在介绍里看见 logo，必须在 README 里写 `<img src="media/icon.png">`。
+- `media/icon.png` 早已进 Git，缺的是 README 引用。
+- 0.1.36：`silk-math-preview-0.1.36.vsix` 1,192,175 bytes，
+  SHA-256 `86DC6778733995E0336FB2F6667320F34F9D6ECE6EE8FFCD59F96551A95C2E60`。
+
+## 2026-08-21 详情页默认英文（0.1.35）
+
+- 商店详情只渲染 README.md。中英切换用页内锚点，不要指望 JS 或第二份 README。
+- 图太大是显示宽度问题：给 `<img width="480">`，不要堆四张全宽图。
+- 0.1.35：`silk-math-preview-0.1.35.vsix` 1,192,129 bytes，
+  SHA-256 `37712EA9B9820DF747CFBEBC472A891DE8CA15FC3A0334C8ABAFFF3460EBA1F0`。
+  本地 VSIX 详情页图片仍依赖 GitHub `repository` 改写；公开仓库未更新前图可能空白。
+
+## 2026-08-21 卡片跑到左边（0.1.34）
+
+- 短行 + `position: relative` + `right: 0` = 卡片在编辑器左边。要钉在 Silk Math
+  上头，包含块必须是整列编辑器，不能是行盒。
+- 点击后不要给 Silk Math 加 `^`。
+- 0.1.34：`silk-math-preview-0.1.34.vsix` 1,192,094 bytes，
+  SHA-256 `321C96800ED0F488A4211DAEEB9A96964E55ECD2AF52C66DEE5B3909B3CDDF6F`。
+
+## 2026-08-21 点击没反应（0.1.33）
+
+- 用户能悬停出卡片、点击无效果：先查 hide 监听和 `position:fixed`，不要再加 QuickPick
+  或 views。
+- 点状态栏可能把 `activeTextEditor` 变成 `undefined`，不能据此关卡片。
+- SVG `contentIconPath` 是图片，里面的 `<a href="command:">` 不会执行。可点的开关要
+  用真正的 StatusBarItem / MarkdownString / QuickPick / webview。
+- 0.1.33：`silk-math-preview-0.1.33.vsix` 1,191,985 bytes，
+  SHA-256 `1F726698618F590CB1B9F3B5A629BD9D2E3C11BE7F21CC72F344B91DAFE3B343`。
+
+## 2026-08-21 点击飞出卡片（0.1.32）
+
+- 顶部 QuickPick ≠ Copilot 悬浮框。钉在状态栏上方要用 `position: fixed` decoration，不要 `showQuickPick`。
+- 0.1.32：`silk-math-preview-0.1.32.vsix` 1,191,461 bytes，
+  SHA-256 `17C2FFB4397786E17BF215062E3FF5DF43EF7797A5A93C2B5DAC560D7DB0561A`。
+
+## 2026-08-21 Markdown 表格与渲染合并（0.1.31）
+
+- 管道表格按块识别，不要把单元格里的 `$x$` 当成独立公式。
+- 热路径卡顿多半是 Worker 队列而不是扫描。latest-wins 必须在 **postMessage 之前**丢掉旧任务。
+- 0.1.31：`silk-math-preview-0.1.31.vsix` 1,189,847 bytes，
+  SHA-256 `791D44B7B7CD2B47B3BEBCF75D96C609CEDB96779A24D1DA947E1BD821CF07B8`。
+
+## 2026-08-21 Jupyter 单元格裁切（0.1.30）
+
+- 浮层出了 markdown 格就被下一格盖住。检测 `vscode-notebook-cell`，下方空间不够就 above。
+- 0.1.30：`silk-math-preview-0.1.30.vsix` 1,188,662 bytes，
+  SHA-256 `54E5137FDF136CA0F3CD1749A37F253CBFC9EE9469DA70DC2685B3A5BFF69A8C`。
+
+## 2026-08-21 underbrace url(#) 裁剪无效（0.1.29）
+
+- 浮层是图片不是 inline SVG。`url(#clip)` 对装饰无效。把矩形拉伸段直接裁进路径。
+- 0.1.29：`silk-math-preview-0.1.29.vsix` 1,188,340 bytes，
+  SHA-256 `E3D3925D6EC06F9E0C6B0C01B3074E3D5809B6B49F9F4BB4C3B62FC94F919BF5`。
+
+## 2026-08-21 状态栏点击空实现（0.1.28）
+
+- 用户报「点击右下角没反应」：command 绑了 `statusBar.entry.showTooltip` 的空实现。
+  点击必须落到我们自己的 `showMenu`。
+- 0.1.28：`silk-math-preview-0.1.28.vsix` 1,187,454 bytes，
+  SHA-256 `244147F421CD20BC5A496628C24A65242AB42A7CB3B761DFC4B0D73FE6B44BF6`。
+
+## 2026-08-21 underbrace 裁剪与默认 135%（0.1.27）
+
+- 空浮层修好之后横杠仍错：缺的是 clip，不是再截断。MathJax 用内层 svg 当视口。
+- 浮层“空白太多”先查 viewBox 是否被启发式外扩，再查 CSS padding。
+- 0.1.27：`silk-math-preview-0.1.27.vsix` 1,187,260 bytes，
+  SHA-256 `12690FB4CBE2508121A6DF5DACFB8672DE4F76F87857372A1F5E37EB0AD272F2`。
+
+## 2026-08-21 underbrace 空浮层（0.1.26）
+
+- 面板里能看见半截、编辑器浮层是空底：两条路不是同一套渲染。浮层是 data URI 图片，
+  嵌套 `<svg>` 会被 Chromium/VS Code 丢掉整张图；面板是 innerHTML，只受 viewBox 裁剪。
+- 0.1.22 只修了“截断根节点”，没有展平内层 svg，所以这类公式仍会空白。
+- 0.1.26：`silk-math-preview-0.1.26.vsix` 1,187,027 bytes，
+  SHA-256 `4F6C8E455B78E674D362B9C323B910B1D4D5D5882135288DD876F931E1864249`。
+
+## 2026-08-21 状态栏只要原生悬浮框（0.1.25）
+
+- 底栏整条 Silk Math 标签 = 贡献了 `views`。用户截图里的 Copilot 卡片 = 核心 hover。
+  两者不是同一套 API。要 Copilot 那种位置和 chrome，只能走 MarkdownString tooltip。
+- 下次再想「点击打开自定义 HTML」，先问：能不能接受工作区面板？不能就不要贡献 view。
+- 0.1.25：16 files / 162 tests，main bundle 111,880 B；
+  `silk-math-preview-0.1.25.vsix` 1,185,627 bytes，
+  SHA-256 `94FF6F39CC5E4B06727B8A4CF01DC5EAAE792F39203EF6A02D9DE3C2614D315D`。
+
 ## 2026-08-20 默认预览 140% 显示为 100%（0.1.24）
 
 - 存储值仍是相对编辑器字号的倍率；默认 1.4。UI 100% = 1.4。

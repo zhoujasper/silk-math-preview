@@ -48,4 +48,4 @@ Your own macros, environments, colors, and tables show up too. Undefined command
 
 <p align="center"><a href="#english">English</a></p>
 
-MIT License · [LICENSE](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+MIT License · [Jasper Zhou](https://zhoujasper.github.io) · [GitHub](https://github.com/zhoujasper/silk-math-preview) · [LICENSE](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

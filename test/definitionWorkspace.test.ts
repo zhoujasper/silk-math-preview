@@ -230,6 +230,24 @@ describe('DefinitionWorkspace', () => {
     workspace.dispose();
   });
 
+  it('prelude 把 eqmath 里的 equation/align 折成可嵌套形式', async () => {
+    state.files.set('/ws/notes.cls', [
+      '\\newenvironment{eqmath}{\\begin{equation}}{\\end{equation}}',
+      '\\newenvironment{almath}{\\begin{align}}{\\end{align}}',
+    ].join('\n'));
+    const text = '\\documentclass{notes}\n\\begin{eqmath}x\\end{eqmath}';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+    const snapshot = await workspace.getSnapshot(document, text.length);
+
+    expect(snapshot.environments).toEqual(expect.arrayContaining(['eqmath', 'almath']));
+    expect(snapshot.prelude).toContain('\\newenvironment{eqmath}{}{}');
+    expect(snapshot.prelude).toContain('\\newenvironment{almath}{\\begin{aligned}}{\\end{aligned}}');
+    expect(snapshot.prelude).not.toContain('\\begin{equation}');
+    expect(snapshot.prelude).not.toContain('\\begin{align}');
+    workspace.dispose();
+  });
+
   it('peekSnapshot 只返回已算好的快照，不触发解析', async () => {
     const text = '\\newcommand{\\aa}{A}\n$\\aa$';
     const document = makeDocument('/ws/peek.tex', 'latex', text);

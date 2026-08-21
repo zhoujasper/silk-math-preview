@@ -1,6 +1,7 @@
 import { anchorCaret } from './caretAnchor';
 import { mathRegionContent } from './mathScanner';
-import { buildTableExpression, isTableEnvironment, tablePreambleLength } from './tablePreview';
+import { buildMarkdownTableExpression, markdownTableCellStart } from './markdownTable';
+import { buildTableExpression, isTableEnvironment, isTablePreviewRegion, tablePreambleLength } from './tablePreview';
 import type { CaretAnchor, MathRegion } from './types';
 
 /**
@@ -31,6 +32,22 @@ const INNER_PREVIEW_ENVIRONMENTS: Readonly<Record<string, string | undefined>> =
   flalign: 'aligned',
   'flalign*': 'aligned',
 });
+
+/**
+ * `.cls` 里常见 `\newenvironment{eqmath}{\begin{equation}}{\end{equation}}`。
+ * 预览已经在数学模式，再展开成 equation/align 会报
+ * “Erroneous nesting of equation structures”。prelude 里改成可嵌套形式。
+ */
+export function sanitizeEnvironmentBodyForMathJax(text: string): string {
+  return text.replace(
+    /\\(begin|end)[ \t]*\{([A-Za-z]+\*?)\}/g,
+    (whole, kind: string, name: string) => {
+      if (!Object.hasOwn(INNER_PREVIEW_ENVIRONMENTS, name)) return whole;
+      const inner = INNER_PREVIEW_ENVIRONMENTS[name];
+      return inner === undefined ? '' : `\\${kind}{${inner}}`;
+    },
+  );
+}
 
 function wrapEnvironmentForPreview(environment: string, content: string): string {
   if (Object.hasOwn(INNER_PREVIEW_ENVIRONMENTS, environment)) {
@@ -163,8 +180,34 @@ function textModeGroupStart(content: string, offset: number): number | undefined
  * 判断插入点当前处于文本模式：`\text{for |}` 里直接插入 `\class{...}` 会被
  * 原样当成文字打印出来，必须先用 `$...$` 切回数学。
  */
-function isTextModeAt(content: string, offset: number, tableCell: boolean): boolean {
-  const groupStart = tableCell ? 0 : textModeGroupStart(content, offset);
+function latexTableCellStart(content: string, offset: number): number {
+  const clamped = Math.min(Math.max(0, offset), content.length);
+  let start = 0;
+  let depth = 0;
+  for (let cursor = 0; cursor < clamped; cursor += 1) {
+    if (isEscaped(content, cursor)) continue;
+    const character = content[cursor];
+    if (character === '{') depth += 1;
+    else if (character === '}') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && character === '&') start = cursor + 1;
+    else if (depth === 0 && content.startsWith('\\\\', cursor)) {
+      start = cursor + 2;
+      cursor += 1;
+    }
+  }
+  return start;
+}
+
+function isTextModeAt(
+  content: string,
+  offset: number,
+  tableKind: 'none' | 'latex-table' | 'markdown-table',
+): boolean {
+  const groupStart = tableKind === 'markdown-table'
+    ? markdownTableCellStart(content, offset)
+    : tableKind === 'latex-table'
+      ? latexTableCellStart(content, offset)
+      : textModeGroupStart(content, offset);
   if (groupStart === undefined) return false;
   return !isInsideInlineMath(content, offset, groupStart);
 }
@@ -187,7 +230,12 @@ export function buildPreviewExpression(
   const content = mathRegionContent(source, region);
   const caret = anchorCaret(content, caretDocumentOffset - region.contentStart);
   const environmentSafeOffset = protectEnvironmentArguments(region.environment, content, caret.offset);
-  const table = isTableEnvironment(region.environment);
+  const table = isTablePreviewRegion(region);
+  const tableKind = region.kind === 'markdown-table'
+    ? 'markdown-table'
+    : table
+      ? 'latex-table'
+      : 'none';
   const cleaned = removeNonVisualNumberingCommands(
     content,
     environmentSafeOffset,
@@ -198,12 +246,15 @@ export function buildPreviewExpression(
   const visual = (region.environment === undefined
     ? unwrapNestedEnvironment(cleaned.content, cleaned.caretOffset)
     : undefined) ?? cleaned;
-  const marker = isTextModeAt(visual.content, visual.caretOffset, table)
+  const marker = isTextModeAt(visual.content, visual.caretOffset, tableKind)
     ? `$${PREVIEW_CARET_TEX}$`
     : PREVIEW_CARET_TEX;
   const marked = showCaret
     ? `${visual.content.slice(0, visual.caretOffset)}${marker}${visual.content.slice(visual.caretOffset)}`
     : visual.content;
+  if (region.kind === 'markdown-table') {
+    return { expression: buildMarkdownTableExpression(marked), caret };
+  }
   if (table) {
     return { expression: buildTableExpression(marked), caret };
   }

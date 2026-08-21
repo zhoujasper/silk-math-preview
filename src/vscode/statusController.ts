@@ -1,6 +1,17 @@
 import * as vscode from 'vscode';
 
+import {
+  DEFAULT_SCALE,
+  MAX_SCALE,
+  MIN_SCALE,
+  SCALE_STEP,
+  scaleToDisplayPercent,
+} from '../core/statusFlyout';
+
+type FlyoutBoolKey = 'enableInLatex' | 'enableInMarkdown' | 'enableInOtherFiles' | 'previewDefinitions';
+
 export type PreviewLanguage = 'latex' | 'markdown';
+export { DEFAULT_SCALE, MAX_SCALE, MIN_SCALE, SCALE_STEP, scaleToDisplayPercent };
 
 const EXCLUDED_FILES_KEY = 'silkMath.excludedFiles';
 const SNOOZE_CHOICES: ReadonlyArray<{ readonly minutes: number; readonly label: string }> = [
@@ -8,19 +19,10 @@ const SNOOZE_CHOICES: ReadonlyArray<{ readonly minutes: number; readonly label: 
   { minutes: 30, label: '30 分钟' },
 ];
 
-/** 预览缩放：与 package.json 的取值范围保持一致。 */
-export const MIN_SCALE = 0.5;
-export const MAX_SCALE = 3;
-/** 实际渲染倍率 1.4（相对编辑器字号 140%），界面把这个大小显示成 100%。 */
-export const DEFAULT_SCALE = 1.4;
-const SCALE_STEP = DEFAULT_SCALE * 0.05;
-
-export function scaleToDisplayPercent(scale: number): number {
-  return Math.round((scale / DEFAULT_SCALE) * 100);
-}
-
 interface MenuItem extends vscode.QuickPickItem {
   readonly run?: () => unknown;
+  /** 打开其他界面时关掉菜单；开关类操作保持打开并刷新。 */
+  readonly closeMenu?: boolean;
 }
 
 function isLatex(document: vscode.TextDocument): boolean {
@@ -40,7 +42,9 @@ function formatClock(time: number): string {
 }
 
 /**
- * 状态栏入口：左边截图识别，右边 Silk Math 点击打开右侧设置卡片。
+ * 状态栏入口：左边截图识别，右边 Silk Math。点击打开顶部 QuickPick。
+ * 开关留在菜单里立刻刷新勾选；不要用 Markdown hover——内核 locked hover
+ * 不能当场改内容。
  */
 export class StatusController implements vscode.Disposable {
   private readonly captureItem: vscode.StatusBarItem;
@@ -49,40 +53,56 @@ export class StatusController implements vscode.Disposable {
   private readonly changeEmitter = new vscode.EventEmitter<void>();
   private snoozeUntil = 0;
   private snoozeTimer: NodeJS.Timeout | undefined;
+  private menuPicker: vscode.QuickPick<MenuItem> | undefined;
+  /**
+   * 点选后立刻画菜单用的乐观状态。`configuration.update()` 结束时
+   * `get()` 经常还没刷新。
+   */
+  private readonly pending: Partial<Record<FlyoutBoolKey | 'previewScale', boolean | number>> = {};
+  private pendingExclude: { readonly key: string; readonly value: boolean } | undefined;
 
   /** 策略变化（文件类型开关、暂停、排除、缩放）时触发，预览据此重画。 */
   public readonly onDidChange = this.changeEmitter.event;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
-    this.captureItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 25);
+    this.captureItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 30);
     this.captureItem.name = 'Silk Math 截图识别';
     this.captureItem.text = '$(screen-full)';
     this.captureItem.tooltip = '截图识别公式或文字（本地运行，不上传）';
     this.captureItem.command = 'silkMath.ocr.capture';
 
-    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 24);
+    this.item = vscode.window.createStatusBarItem('silkMath.status', vscode.StatusBarAlignment.Right, 24);
     this.item.name = 'Silk Math';
-    this.item.command = 'silkMath.togglePanel';
+    this.item.text = 'Silk Math';
+    this.item.accessibilityInformation = { label: 'Silk Math', role: 'button' };
+    this.item.command = 'silkMath.showMenu';
 
     this.disposables.push(
       this.captureItem,
       this.item,
       this.changeEmitter,
       vscode.commands.registerCommand('silkMath.showMenu', () => this.showMenu()),
+      vscode.commands.registerCommand('silkMath.revealFlyout', () => this.showMenu()),
+      vscode.commands.registerCommand('silkMath.dismissFlyout', () => this.hideMenu()),
       vscode.commands.registerCommand('silkMath.increasePreviewScale', () => this.adjustPreviewScale(SCALE_STEP)),
       vscode.commands.registerCommand('silkMath.decreasePreviewScale', () => this.adjustPreviewScale(-SCALE_STEP)),
       vscode.commands.registerCommand('silkMath.resetPreviewScale', () => this.resetPreviewScale()),
       vscode.commands.registerCommand('silkMath.toggleLanguage', (key: unknown) => this.toggleLanguage(key)),
+      vscode.commands.registerCommand('silkMath.togglePreviewDefinitions', () => this.togglePreviewDefinitions()),
       vscode.commands.registerCommand('silkMath.toggleExcludeFile', () => this.toggleExcludeFile()),
       vscode.commands.registerCommand('silkMath.snooze', (minutes: unknown) => {
         if (typeof minutes === 'number' && minutes > 0) this.snooze(minutes);
         else this.resume();
       }),
-      vscode.commands.registerCommand('silkMath.openSettings', () =>
-        vscode.commands.executeCommand('workbench.action.openSettings', 'silkMath')),
+      vscode.commands.registerCommand('silkMath.openSettings', () => (
+        vscode.commands.executeCommand('workbench.action.openSettings', 'silkMath')
+      )),
       vscode.window.onDidChangeActiveTextEditor(() => this.refresh()),
+      vscode.window.onDidChangeActiveColorTheme(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration('silkMath')) this.refresh();
+        if (!event.affectsConfiguration('silkMath')) return;
+        this.reconcilePending();
+        this.refresh();
       }),
     );
     this.refresh();
@@ -90,21 +110,22 @@ export class StatusController implements vscode.Disposable {
 
   public dispose(): void {
     if (this.snoozeTimer) clearTimeout(this.snoozeTimer);
+    this.hideMenu();
     for (const disposable of this.disposables) disposable.dispose();
   }
 
   /** 该文档按什么语法扫描；返回 undefined 表示这里不做预览。 */
   public previewLanguage(document: vscode.TextDocument): PreviewLanguage | undefined {
     if (this.isSnoozed() || this.isExcluded(document.uri)) return undefined;
-    const config = vscode.workspace.getConfiguration('silkMath', document.uri);
-    if (isLatex(document)) return config.get('enableInLatex', true) ? 'latex' : undefined;
-    if (isMarkdown(document)) return config.get('enableInMarkdown', true) ? 'markdown' : undefined;
-    // 其他类型按 LaTeX 语法扫描：纯文本笔记里写 `$...$` 的用法很常见。
-    return config.get('enableInOtherFiles', false) ? 'latex' : undefined;
+    if (isLatex(document)) return this.settingBool('enableInLatex', true, document.uri) ? 'latex' : undefined;
+    if (isMarkdown(document)) return this.settingBool('enableInMarkdown', true, document.uri) ? 'markdown' : undefined;
+    return this.settingBool('enableInOtherFiles', false, document.uri) ? 'latex' : undefined;
   }
 
   public isExcluded(uri: vscode.Uri): boolean {
-    return this.excludedFiles().includes(documentKey(uri));
+    const key = documentKey(uri);
+    if (this.pendingExclude?.key === key) return this.pendingExclude.value;
+    return this.excludedFiles().includes(key);
   }
 
   public isSnoozed(): boolean {
@@ -112,23 +133,27 @@ export class StatusController implements vscode.Disposable {
   }
 
   public async adjustPreviewScale(delta: number): Promise<number> {
-    const uri = vscode.window.activeTextEditor?.document.uri;
-    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round((this.previewScale(uri) + delta) * 100) / 100));
-    await this.updateSetting('previewScale', next);
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round((this.previewScale() + delta) * 100) / 100));
+    this.pending.previewScale = next;
+    this.refresh();
+    void this.updateSetting('previewScale', next);
     return next;
   }
 
   public async resetPreviewScale(): Promise<number> {
-    await this.updateSetting('previewScale', DEFAULT_SCALE);
+    this.pending.previewScale = DEFAULT_SCALE;
+    this.refresh();
+    void this.updateSetting('previewScale', DEFAULT_SCALE);
     return DEFAULT_SCALE;
   }
 
-  /** 控制面板的滑块直接给绝对值。 */
   public async setPreviewScale(scale: number): Promise<number> {
     const next = Number.isFinite(scale)
       ? Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round(scale * 100) / 100))
       : DEFAULT_SCALE;
-    await this.updateSetting('previewScale', next);
+    this.pending.previewScale = next;
+    this.refresh();
+    void this.updateSetting('previewScale', next);
     return next;
   }
 
@@ -137,9 +162,34 @@ export class StatusController implements vscode.Disposable {
   }
 
   private previewScale(uri?: vscode.Uri): number {
+    const pending = this.pending.previewScale;
+    if (typeof pending === 'number' && Number.isFinite(pending)) {
+      return Math.min(MAX_SCALE, Math.max(MIN_SCALE, pending));
+    }
     const raw = vscode.workspace.getConfiguration('silkMath', uri).get('previewScale', DEFAULT_SCALE);
     if (!Number.isFinite(raw)) return DEFAULT_SCALE;
     return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(raw)));
+  }
+
+  private settingBool(key: FlyoutBoolKey, fallback: boolean, uri?: vscode.Uri): boolean {
+    const pending = this.pending[key];
+    if (typeof pending === 'boolean') return pending;
+    return vscode.workspace.getConfiguration('silkMath', uri).get(key, fallback) === true;
+  }
+
+  private reconcilePending(): void {
+    const uri = vscode.window.activeTextEditor?.document.uri;
+    const config = vscode.workspace.getConfiguration('silkMath', uri);
+    for (const key of ['enableInLatex', 'enableInMarkdown', 'enableInOtherFiles', 'previewDefinitions'] as const) {
+      if (this.pending[key] !== undefined && config.get(key) === this.pending[key]) delete this.pending[key];
+    }
+    if (typeof this.pending.previewScale === 'number') {
+      const raw = config.get('previewScale', DEFAULT_SCALE);
+      if (raw === this.pending.previewScale) delete this.pending.previewScale;
+    }
+    if (this.pendingExclude && this.excludedFiles().includes(this.pendingExclude.key) === this.pendingExclude.value) {
+      this.pendingExclude = undefined;
+    }
   }
 
   private excludedFiles(): string[] {
@@ -157,15 +207,29 @@ export class StatusController implements vscode.Disposable {
   private async toggleExcludeFile(): Promise<void> {
     const document = vscode.window.activeTextEditor?.document;
     if (!document) return;
-    await this.setExcluded(document.uri, !this.isExcluded(document.uri));
+    const key = documentKey(document.uri);
+    const next = !this.isExcluded(document.uri);
+    this.pendingExclude = { key, value: next };
+    this.refresh();
+    await this.setExcluded(document.uri, next);
   }
 
-  private async toggleLanguage(key: unknown): Promise<void> {
+  private toggleLanguage(key: unknown): void {
     if (key !== 'enableInLatex' && key !== 'enableInMarkdown' && key !== 'enableInOtherFiles') return;
     const uri = vscode.window.activeTextEditor?.document.uri;
     const fallback = key !== 'enableInOtherFiles';
-    const current = vscode.workspace.getConfiguration('silkMath', uri).get(key, fallback);
-    await this.updateSetting(key, !current);
+    const next = !this.settingBool(key, fallback, uri);
+    this.pending[key] = next;
+    this.refresh();
+    void this.updateSetting(key, next);
+  }
+
+  private togglePreviewDefinitions(): void {
+    const uri = vscode.window.activeTextEditor?.document.uri;
+    const next = !this.settingBool('previewDefinitions', false, uri);
+    this.pending.previewDefinitions = next;
+    this.refresh();
+    void this.updateSetting('previewDefinitions', next);
   }
 
   private snooze(minutes: number): void {
@@ -189,43 +253,78 @@ export class StatusController implements vscode.Disposable {
 
   private refresh(): void {
     const document = vscode.window.activeTextEditor?.document;
-    const active = document !== undefined && this.previewLanguage(document) !== undefined;
-    if (this.isSnoozed()) this.item.text = '$(debug-pause) Silk Math';
-    else if (!active) this.item.text = '$(circle-slash) Silk Math';
-    else this.item.text = 'Silk Math';
-    this.item.tooltip = this.hoverHint(document, active);
+    const snoozed = this.isSnoozed();
+    const excluded = document !== undefined && this.isExcluded(document.uri);
+    this.item.text = 'Silk Math';
+    this.item.command = 'silkMath.showMenu';
+    this.item.tooltip = snoozed
+      ? `Silk Math · 暂停到 ${formatClock(this.snoozeUntil)}`
+      : excluded
+        ? 'Silk Math · 已排除当前文件'
+        : '点击打开 Silk Math 菜单（勾选会立刻更新）';
     this.item.show();
     this.captureItem.show();
     if (!vscode.workspace.getConfiguration('silkMath').get('ocr.enabled', true)) this.captureItem.hide();
     this.changeEmitter.fire();
   }
 
-  /** 悬停只给一句提示；完整设置在点击弹出的卡片里。 */
-  private hoverHint(document: vscode.TextDocument | undefined, active: boolean): vscode.MarkdownString {
-    const excluded = document !== undefined && this.isExcluded(document.uri);
-    let text = '点击打开 Silk Math 设置卡片 / Click to open settings';
-    if (this.isSnoozed()) text = `已暂停到 ${formatClock(this.snoozeUntil)} · 点击打开设置`;
-    else if (excluded) text = '当前文件已排除 · 点击打开设置';
-    else if (!active) text = '当前文件类型未启用 · 点击打开设置';
-    const markdown = new vscode.MarkdownString(text, true);
-    markdown.isTrusted = true;
-    return markdown;
+  /**
+   * 点击状态栏或命令面板打开顶部菜单。开关类操作后保持打开并刷新。
+   */
+  private showMenu(): void {
+    if (this.menuPicker) {
+      this.menuPicker.items = this.menuItems(vscode.window.activeTextEditor?.document);
+      this.menuPicker.show();
+      return;
+    }
+    const picker = vscode.window.createQuickPick<MenuItem>();
+    this.menuPicker = picker;
+    picker.title = 'Silk Math';
+    picker.placeholder = '选择要执行的操作 / Pick an action';
+    picker.ignoreFocusOut = true;
+    picker.matchOnDescription = true;
+    picker.keepScrollPosition = true;
+    picker.items = this.menuItems(vscode.window.activeTextEditor?.document);
+    void vscode.commands.executeCommand('setContext', 'silkMath.flyoutVisible', true);
+    const refresh = (): void => {
+      if (this.menuPicker === picker) {
+        picker.items = this.menuItems(vscode.window.activeTextEditor?.document);
+      }
+    };
+    const subscriptions = [
+      this.onDidChange(refresh),
+      picker.onDidAccept(() => {
+        const item = picker.selectedItems[0];
+        if (!item?.run) {
+          picker.hide();
+          return;
+        }
+        void Promise.resolve(item.run()).then(() => {
+          if (item.closeMenu) picker.hide();
+          else refresh();
+        });
+      }),
+      picker.onDidHide(() => {
+        for (const subscription of subscriptions) subscription.dispose();
+        picker.dispose();
+        if (this.menuPicker === picker) this.menuPicker = undefined;
+        void vscode.commands.executeCommand('setContext', 'silkMath.flyoutVisible', false);
+      }),
+    ];
+    picker.show();
   }
 
-  /** 键盘可达的等价入口：悬浮面板只能用鼠标，命令面板/点击走这里。 */
-  private async showMenu(): Promise<void> {
-    const document = vscode.window.activeTextEditor?.document;
-    const picked = await vscode.window.showQuickPick(this.menuItems(document), {
-      title: 'Silk Math',
-      placeHolder: '选择要执行的操作 / Pick an action',
-    });
-    await picked?.run?.();
+  private hideMenu(): void {
+    this.menuPicker?.hide();
+    this.menuPicker = undefined;
+    void vscode.commands.executeCommand('setContext', 'silkMath.flyoutVisible', false);
   }
 
   private menuItems(document: vscode.TextDocument | undefined): MenuItem[] {
     const config = vscode.workspace.getConfiguration('silkMath', document?.uri);
+    const uri = document?.uri;
     const check = (value: boolean): string => (value ? '$(check)' : '$(blank)');
-    const scale = this.previewScale(document?.uri);
+    const scale = this.previewScale(uri);
     const excluded = document !== undefined && this.isExcluded(document.uri);
     const separator = (label: string): MenuItem => ({ label, kind: vscode.QuickPickItemKind.Separator });
     return [
@@ -245,17 +344,22 @@ export class StatusController implements vscode.Disposable {
       },
       separator('启用范围 / Where it runs'),
       {
-        label: `${check(config.get('enableInLatex', true))} LaTeX / TeX 文件`,
+        label: `${check(this.settingBool('enableInLatex', true, uri))} LaTeX / TeX 文件`,
         run: () => this.toggleLanguage('enableInLatex'),
       },
       {
-        label: `${check(config.get('enableInMarkdown', true))} Markdown / MDX 文件`,
+        label: `${check(this.settingBool('enableInMarkdown', true, uri))} Markdown / MDX 文件`,
         run: () => this.toggleLanguage('enableInMarkdown'),
       },
       {
-        label: `${check(config.get('enableInOtherFiles', false))} 其他所有文件类型`,
+        label: `${check(this.settingBool('enableInOtherFiles', false, uri))} 其他所有文件类型`,
         description: '按 LaTeX 语法识别 $...$、\\[...\\]',
         run: () => this.toggleLanguage('enableInOtherFiles'),
+      },
+      {
+        label: `${check(this.settingBool('previewDefinitions', false, uri))} 定义也预览`,
+        description: '只有 \\def / \\newcommand 的公式也画出展开结果',
+        run: () => this.togglePreviewDefinitions(),
       },
       separator('当前文件 / This file'),
       ...(document
@@ -280,12 +384,14 @@ export class StatusController implements vscode.Disposable {
         ? [{
           label: '$(screen-full) 截图识别公式或文字',
           description: '首次使用按需下载本地模型',
+          closeMenu: true,
           run: () => vscode.commands.executeCommand('silkMath.ocr.capture'),
         }]
         : []),
       {
         label: '$(gear) 打开 Silk Math 设置',
-        run: () => vscode.commands.executeCommand('silkMath.openSettings'),
+        closeMenu: true,
+        run: () => vscode.commands.executeCommand('workbench.action.openSettings', 'silkMath'),
       },
     ];
   }
@@ -302,12 +408,18 @@ export class StatusController implements vscode.Disposable {
     for (const target of targets) {
       try {
         await vscode.workspace.getConfiguration('silkMath').update(key, value, target);
+        this.reconcilePending();
         this.refresh();
         return;
       } catch {
-        // 换下一个作用域重试。
+        // 换下一个作用域退让。
       }
     }
+    if (key === 'previewScale' || key === 'enableInLatex' || key === 'enableInMarkdown'
+      || key === 'enableInOtherFiles' || key === 'previewDefinitions') {
+      delete this.pending[key];
+    }
+    this.refresh();
     const reload = '重载窗口';
     const choice = await vscode.window.showWarningMessage(
       `Silk Math：无法写入设置 silkMath.${key}。刚升级过插件时需要重载窗口让新设置生效。`,
