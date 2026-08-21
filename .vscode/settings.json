@@ -1,0 +1,6 @@
+{
+    "silkMath.enableInOtherFiles": true,
+    "silkMath.previewScale": 1.35,
+    "silkMath.previewDefinitions": false,
+    "silkMath.enableInLatex": true
+}
