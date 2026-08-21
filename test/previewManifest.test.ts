@@ -85,6 +85,15 @@ describe('preview manifest', () => {
     expect(authorUrl).toBe('https://zhoujasper.github.io');
   });
 
+  it('CI 打包走 vscode:prepublish，发布者仍是 silkmath', () => {
+    const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as {
+      readonly publisher?: string;
+      readonly scripts?: { readonly 'vscode:prepublish'?: string };
+    };
+    expect(manifest.publisher).toBe('silkmath');
+    expect(manifest.scripts?.['vscode:prepublish']).toBe('npm run build');
+  });
+
   it('Esc 只在公式浮层可见时关闭预览', () => {
     const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as {
       readonly activationEvents?: readonly string[];

@@ -4,10 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,4 +21,83 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
+      - run: npm run build
+      - name: Package VSIX
+        run: npx vsce package
+      - run: npm run check:size
+      - name: Inspect VSIX
+        run: |
+          set -euo pipefail
+          VSIX=$(ls silk-math-preview-*.vsix)
+          echo "VSIX=$VSIX"
+          npx vsce ls
+          python3 - <<'PY'
+          import glob, zipfile, sys
+          files = glob.glob("silk-math-preview-*.vsix")
+          if len(files) != 1:
+              sys.exit(f"expected one vsix, got {files}")
+          names = zipfile.ZipFile(files[0]).namelist()
+          required = (
+              "extension/package.json",
+              "extension/dist/extension.js",
+              "extension/dist/render-worker.js",
+              "extension/readme.md",
+              "extension/media/icon.png",
+          )
+          missing = [name for name in required if name not in names]
+          if missing:
+              sys.exit(f"VSIX missing {missing}")
+          banned = [name for name in names if "/test/" in name or name.endswith(".map") or "/src/" in name]
+          if banned:
+              sys.exit(f"VSIX must not include {banned[:8]}")
+          print(f"ok {files[0]} entries={len(names)}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: silk-math-preview-vsix
+          path: silk-math-preview-*.vsix
+          if-no-files-found: error
+
+  publish:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: silk-math-preview-vsix
+          path: .
+      - name: Publish to Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+          VSIX=$(ls silk-math-preview-*.vsix)
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::warning::Repository secret VSCE_PAT is not set. Skipping Marketplace publish. See docs/PUBLISH.md"
+            exit 0
+          fi
+          npx vsce publish --packagePath "$VSIX" --skip-duplicate
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          VSIX=$(ls silk-math-preview-*.vsix)
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "$VSIX" --clobber
+          else
+            gh release create "$VERSION" "$VSIX" --title "$VERSION" --generate-notes --target "$GITHUB_SHA"
+          fi

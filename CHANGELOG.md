@@ -6,6 +6,8 @@
   状态栏 Markdown hover（内核 locked hover 没法当场改勾选）。Esc 关掉菜单。
 - 作者 Jasper Zhou，主页 https://zhoujasper.github.io。`private: false`，
   便于发布到 VS Code Marketplace。
+- GitHub Actions：推到 `main` 会测试、打包 VSIX；配置 `VSCE_PAT` 后自动发布
+  到 Marketplace，并更新 GitHub Release。
 
 ## 0.1.66 - 2026-08-21
 

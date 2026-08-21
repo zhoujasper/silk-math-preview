@@ -1,5 +1,14 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-21 GitHub Actions 自动发 Marketplace
+
+- `.github/workflows/ci.yml`：PR/push 跑 typecheck、单元测试、`vsce package`、
+  VSIX 内容检查。`main` 或手动 workflow 在测试通过后发布。
+- Marketplace 用仓库密钥 `VSCE_PAT`（Azure DevOps Marketplace Manage）。
+  没配密钥时跳过发布、不把 CI 标红。版本已存在时 `--skip-duplicate`。
+- 同时用 `GITHUB_TOKEN` 创建/更新同号 GitHub Release 并附上 VSIX。
+- `package.json` 增加 `vscode:prepublish: npm run build`。步骤见 `docs/PUBLISH.md`。
+
 ## 2026-08-21 GitHub 与 Marketplace 发布信息（0.1.67）
 
 - 作者 `Jasper Zhou`，主页 `https://zhoujasper.github.io`，仓库

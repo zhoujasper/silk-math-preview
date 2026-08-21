@@ -1,5 +1,11 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-21 GitHub Actions 自动发 Marketplace
+
+- `main` 推送：测试 + 打包；有 `VSCE_PAT` 就 `vsce publish --skip-duplicate`，
+  并更新 GitHub Release。密钥配在仓库 Settings → Secrets。
+- 没密钥时跳过发布，CI 仍绿。
+
 ## 2026-08-21 GitHub 与 Marketplace（0.1.67）
 
 - 作者 Jasper Zhou，https://zhoujasper.github.io ；仓库
