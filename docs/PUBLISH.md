@@ -1,47 +1,36 @@
 # 发布 Silk Math Preview
 
-源码仓库：https://github.com/zhoujasper/silk-math-preview  
 作者主页：https://zhoujasper.github.io  
-Marketplace 扩展 ID：`silkmath.silk-math-preview`
+源码：https://github.com/zhoujasper/silk-math-preview  
+管理后台（登录微软账号）：https://marketplace.visualstudio.com/manage
 
-详情页图片靠 GitHub 仓库里的 `media/*.png`。`vsce` 打包时会把 README 相对路径改写成 GitHub 地址，不要加 `--no-rewrite-relative-links`。
+商店详情页 `https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview` **在第一次发布成功之前会是 404**，这是正常的。
 
-推到 `main` 会跑 GitHub Actions：测试、打包 VSIX，并在配置了 `VSCE_PAT` 后自动发布到 Marketplace。版本号没变时 `--skip-duplicate` 会跳过，不会报错。
+## 第一次发布（网页上传，不用命令行）
 
-## 1. 一次性：Marketplace 发布者 + PAT
+1. 打开 https://marketplace.visualstudio.com/manage ，用 **Microsoft 账号**登录。
+2. 左侧点 **Create publisher**。
+   - ID：`silkmath`（必须和 package.json 一致，建好不能改）
+   - Name：`Silk Math` 或 `Jasper Zhou`
+3. 点 **Create**。
+4. 在该发布者页面点 **New extension** → **Visual Studio Code**。
+5. 上传仓库 Releases 里的 VSIX：  
+   https://github.com/zhoujasper/silk-math-preview/releases  
+   文件名类似 `silk-math-preview-0.1.67.vsix`。
+6. 提交后等几分钟到几小时审核。通过后商店页才会存在。
 
-1. 用 Microsoft 账号打开 [创建发布者](https://marketplace.visualstudio.com/manage/create-publisher)。
-2. **Publisher ID 必须是 `silkmath`**（和 `package.json` 的 `publisher` 一致）。显示名可以写成 `Silk Math`。
-3. 打开 [Azure DevOps PAT](https://dev.azure.com/_usersSettings/tokens)。若提示建组织，建一个即可。
-4. New Token：
-   - Organization: **All accessible organizations**
-   - Scopes: **Custom** → **Marketplace** → **Manage**
-5. 复制 token（只显示一次）。不要写进仓库。
+## 自动发布（GitHub Actions）
 
-## 2. 把 PAT 交给 GitHub Actions
+1. 先有 Azure DevOps 组织：打开 https://dev.azure.com 登录，按提示 **Create new organization**（名字随意，例如 `zhoujasper`）。
+2. 右上角头像旁齿轮 / 用户菜单 → **Personal access tokens** → **New Token**：
+   - Name：`vscode-marketplace`
+   - Organization：**All accessible organizations**（不要选某一个组织）
+   - Scopes：点 **Show all scopes**，找到 **Marketplace**，勾 **Manage**
+   - Create，立刻复制（只显示一次）
+3. 打开 https://github.com/zhoujasper/silk-math-preview/settings/secrets/actions  
+   → **New repository secret**  
+   - Name：`VSCE_PAT`  
+   - Secret：刚才的 token
+4. 打开 https://github.com/zhoujasper/silk-math-preview/actions → **CI** → **Run workflow**。
 
-仓库 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**：
-
-- Name: `VSCE_PAT`
-- Secret: 刚才的 Azure DevOps PAT
-
-保存后，下一次推到 `main`（或手动 **Run workflow**）就会发布。
-
-## 3. 以后发新版本
-
-1. 改 `package.json` 和 `package-lock.json` 的 `version`（已发布过的号不能重用）。
-2. 更新 `CHANGELOG.md`。
-3. `git push origin main`。
-
-Actions 会：跑测试 → 打 VSIX → `vsce publish --skip-duplicate` → 更新 GitHub Release。
-
-别人在 VS Code 搜 **Silk Math Preview**，或打开：
-
-https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview
-
-## 4. 本地手动发布（可选）
-
-```powershell
-npx vsce login silkmath
-npx vsce publish
-```
+以后改 `package.json` 版本号并 `git push origin main`，测试通过后会自动发商店。
