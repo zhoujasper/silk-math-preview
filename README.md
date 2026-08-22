@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <strong>If you write math in VS Code, try this.</strong>
+  <strong>Live math preview that follows your caret.</strong>
 </p>
 
 <p align="center">LaTeX · TeX · Markdown · MDX · Jupyter · MathJax · Windows / macOS / Linux</p>
@@ -42,29 +42,25 @@
 
 <h2 id="english">English</h2>
 
-I kept hitting this in VS Code: the math is in my head, but my eyes are stuck on <code>$\frac{\partial u}{\partial t}=...$</code>. Then compile, switch preview, hunt which term the caret is actually in.
+A Visual Studio Code extension for live LaTeX math preview. Open a <code>.tex</code>, Markdown, MDX, Quarto, or Jupyter (<code>.ipynb</code>) notebook and put the caret inside an equation. A MathJax overlay appears beside it; an orange hairline marks where you are typing. No latexmk, no PDF, no compile step.
 
-So I built <strong>Silk Math Preview</strong>. A live LaTeX overlay appears next to the formula you are typing. An orange hairline follows the caret. Not a whole-file preview — wherever you are in the equation, the preview is there too. No latexmk, no PDF, no compile step.
+Works with inline <code>$...$</code> and <code>\(...\)</code>, display <code>\[...\]</code>, <code>equation</code>, <code>align</code>, <code>tabular</code>, GitHub-flavored Markdown tables, and your own macros from <code>.sty</code> / <code>.cls</code>. Undefined commands appear in red; the rest of the formula still renders.
 
-Works in <code>.tex</code>, Markdown, MDX, Jupyter (<code>.ipynb</code>), and other files that contain LaTeX math: <code>$...$</code>, <code>\(...\)</code>, <code>\[...\]</code>, <code>equation</code>, <code>align</code>, <code>tabular</code>, GitHub-flavored Markdown tables, and your own macros from <code>.sty</code> / <code>.cls</code>. Undefined commands appear in red; the rest of the formula still renders. Screenshot OCR is optional and stays on your machine.
-
-<strong>Install:</strong> VS Code → Extensions → search <strong>Silk Math</strong>, or open the <a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">Marketplace listing</a>. The project is open source: <a href="https://github.com/zhoujasper/silk-math-preview">zhoujasper/silk-math-preview</a>.
+Install from the Marketplace by searching <strong>Silk Math Preview</strong>, or open <a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">the listing</a>.
 
 - **Toggle** <code>Ctrl+Alt+M</code> (Mac: <code>Cmd+Alt+M</code>). <code>Esc</code> dismisses the overlay.
 - **Settings** click <strong>Silk Math</strong> in the status bar.
-- **OCR** click the camera icon. Models download on first use.
+- **OCR** screenshot math or text with the camera icon. Models download on first use and stay on your machine.
 
 <p align="center"><a href="#languages">Languages</a></p>
 
 <h2 id="chinese">中文</h2>
 
-如果你平时会在 VS Code 里写 LaTeX / Markdown / Jupyter，应该很容易遇到这个问题：公式写到一半，脑子里想的是数学，眼睛看到的却是 <code>$\frac{\partial u}{\partial t}=...$</code>。然后还要不停编译、切预览、找自己到底写到公式哪一项了。
+这是一个 Visual Studio Code 的实时 LaTeX 公式预览扩展。打开 <code>.tex</code>、Markdown、MDX、Quarto 或 Jupyter（<code>.ipynb</code>），把光标放进公式里。MathJax 浮层会出现在旁边，橙色细线标出你正在写的位置。不用 latexmk，不用出 PDF，边写边看。
 
-所以我做了 <strong>Silk Math Preview</strong>。它直接在你正在写的公式旁边实时渲染 LaTeX，而且不是普通的整段预览——光标写到哪里，预览里也会标到哪里。不用 latexmk，不用出 PDF。
+行内 <code>$...$</code> / <code>\(...\)</code>、独立 <code>\[...\]</code>、<code>equation</code>、<code>align</code>、<code>tabular</code>、GitHub 风格 Markdown 表，以及 <code>.sty</code> / <code>.cls</code> 里自己的宏都会显示。未定义的命令标成红色，其余部分照常渲染。
 
-<code>.tex</code>、Markdown、MDX、Jupyter（<code>.ipynb</code>），以及别的带 LaTeX 公式的文件都可以：<code>$...$</code>、<code>\(...\)</code>、<code>\[...\]</code>、<code>equation</code>、<code>align</code>、<code>tabular</code>、GitHub 风格表，还有 <code>.sty</code> / <code>.cls</code> 里自己的宏。未定义命令标红，其余照常渲染。截图 OCR 可选，只在本机运行。
-
-<strong>安装：</strong>打开 VS Code → Extensions → 搜索 <strong>Silk Math</strong>，或打开<a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">商店页</a>。源码开源：<a href="https://github.com/zhoujasper/silk-math-preview">zhoujasper/silk-math-preview</a>。
+在扩展市场搜索 <strong>Silk Math Preview</strong> 即可安装，或打开<a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">商店页</a>。
 
 - **开关预览** <code>Ctrl+Alt+M</code>（Mac：<code>Cmd+Alt+M</code>），关掉当前浮层按 <code>Esc</code>
 - **设置** 点状态栏的 <strong>Silk Math</strong>
@@ -74,11 +70,11 @@ Works in <code>.tex</code>, Markdown, MDX, Jupyter (<code>.ipynb</code>), and ot
 
 <h2 id="chinese-traditional">繁體中文</h2>
 
-如果你平常會在 VS Code 裡寫 LaTeX / Markdown / Jupyter，應該很容易遇到這個問題：公式寫到一半，腦子裡想的是數學，眼睛看到的卻是 <code>$\frac{\partial u}{\partial t}=...$</code>。然後還要一直編譯、切預覽、找自己到底寫到公式哪一項。
+這是一個 Visual Studio Code 的即時 LaTeX 公式預覽擴充功能。打開 <code>.tex</code>、Markdown、MDX、Quarto 或 Jupyter（<code>.ipynb</code>），把游標放進公式裡。MathJax 浮層會出現在旁邊，橙色細線標出你正在寫的位置。不用 latexmk，不用出 PDF，邊寫邊看。
 
-所以我做了 <strong>Silk Math Preview</strong>。它直接在你正在寫的公式旁邊即時渲染 LaTeX，而且不是普通的整段預覽——游標寫到哪裡，預覽裡也會標到哪裡。不用 latexmk，不用出 PDF。
+行內 <code>$...$</code> / <code>\(...\)</code>、獨立 <code>\[...\]</code>、<code>equation</code>、<code>align</code>、<code>tabular</code>、GitHub 風格 Markdown 表，以及 <code>.sty</code> / <code>.cls</code> 裡自己的巨集都會顯示。未定義的命令標成紅色，其餘部分照常渲染。
 
-<code>.tex</code>、Markdown、MDX、Jupyter（<code>.ipynb</code>），以及其他帶 LaTeX 公式的檔案都可以。<strong>安裝：</strong>VS Code → Extensions → 搜尋 <strong>Silk Math</strong>，或打開<a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">商店頁</a>。源碼：<a href="https://github.com/zhoujasper/silk-math-preview">zhoujasper/silk-math-preview</a>。
+在擴充功能市集搜尋 <strong>Silk Math Preview</strong> 即可安裝，或打開<a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">商店頁</a>。
 
 - **開關預覽** <code>Ctrl+Alt+M</code>（Mac：<code>Cmd+Alt+M</code>），關掉目前浮層按 <code>Esc</code>
 - **設定** 點狀態列的 <strong>Silk Math</strong>
