@@ -14,10 +14,26 @@
    - Name：`Silk Math` 或 `Jasper Zhou`
 3. 点 **Create**。
 4. 在该发布者页面点 **New extension** → **Visual Studio Code**。
-5. 上传仓库 Releases 里的 VSIX：  
+5. 上传仓库 Releases 里的 **正式版** VSIX：  
    https://github.com/zhoujasper/silk-math-preview/releases  
-   文件名类似 `silk-math-preview-0.1.67.vsix`。
+   文件名是 `silk-math-preview-0.1.72.vsix`（不要上传带 `-test-` 的包）。
 6. 提交后等几分钟到几小时审核。通过后商店页才会存在。
+
+## 正式版 vs 测试版（本机可同时安装）
+
+本地打两种包，扩展 ID 不同，不会覆盖已经从商店装的正式版：
+
+```
+npm run package:release   # silk-math-preview-<version>.vsix
+                          # ID：silkmath.silk-math-preview，发 Marketplace 用这个
+npm run package:test      # silk-math-preview-test-<version>.vsix
+                          # ID：silkmath.silk-math-preview-test，状态栏是 Silk Math Test
+npm run package           # 先跑 verify，再打上面两个
+```
+
+- 测试包命令前缀是 `silkMathTest.*`，设置是 `silkMathTest.*`，快捷键是 `Ctrl+Alt+Shift+M`。
+- 测试包 `private: true`，不要用它发商店。
+- VS Code：扩展视图 → `…` → **Install from VSIX**，分别装两个文件即可并排使用。
 
 ## 自动发布（GitHub Actions）
 

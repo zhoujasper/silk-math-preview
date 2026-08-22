@@ -2,12 +2,24 @@ import { build, context } from 'esbuild';
 import { resolve } from 'node:path';
 
 const watch = process.argv.includes('--watch');
+const testChannel = process.env.SILK_CHANNEL === 'test';
+const channelPlugin = {
+  name: 'silk-channel',
+  setup(build) {
+    if (!testChannel) return;
+    build.onResolve({ filter: /(^|\/)channel$/ }, (args) => {
+      if (args.path.includes('channelTest')) return undefined;
+      return { path: resolve('src/core/channelTest.ts') };
+    });
+  },
+};
 const shared = {
   bundle: true,
   minify: !watch,
   sourcemap: watch,
   logLevel: 'info',
   target: 'node18',
+  plugins: [channelPlugin],
 };
 
 const builds = [

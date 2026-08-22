@@ -3,6 +3,8 @@ import { join } from 'node:path';
 
 import * as vscode from 'vscode';
 
+import { cmd, COMMAND_NS, PRODUCT_NAME } from '../core/channel';
+import { fillTemplate, isCancelledMessage, uiCopy } from '../core/uiLocale';
 import { captureFullScreen } from '../ocr/captureService';
 import { OCR_PACK_BYTES, OCR_PACK_VERSION } from '../ocr/packManifest';
 import { OcrPackManager } from '../ocr/packManager';
@@ -33,8 +35,8 @@ function escapeInlineJson(value: unknown): string {
   });
 }
 
-function validImageFilter(): Record<string, string[]> {
-  return { 图片: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] };
+function validImageFilter(label: string): Record<string, string[]> {
+  return { [label]: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] };
 }
 
 /** 状态栏、首次按需安装、系统截图和 Webview/编辑器之间的唯一桥接层。 */
@@ -52,7 +54,7 @@ export class OcrController implements vscode.Disposable {
     this.pack = new OcrPackManager(packPath);
     // 状态栏只保留一个 Silk Math 入口；截图识别作为菜单里的一项。
     this.disposables.push(
-      vscode.commands.registerCommand('silkMath.ocr.capture', () => this.capture()),
+      vscode.commands.registerCommand(cmd('ocr.capture'), () => this.capture()),
     );
   }
 
@@ -65,30 +67,36 @@ export class OcrController implements vscode.Disposable {
 
   private async ensurePack(): Promise<boolean> {
     if (await this.pack.isInstalled()) return true;
+    const ocr = uiCopy(vscode.env.language).ocr;
+    const download = ocr.downloadAction;
     const choice = await vscode.window.showInformationMessage(
-      `截图识别首次使用需下载约 ${megabytes(OCR_PACK_BYTES)} 本地模型（公式 + 中英文）。只在本机运行，截图不会上传；下载一次即可离线使用。`,
+      fillTemplate(ocr.downloadPrompt, { mb: megabytes(OCR_PACK_BYTES) }),
       { modal: true },
-      '下载并启用',
+      download,
     );
-    if (choice !== '下载并启用') return false;
+    if (choice !== download) return false;
     try {
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: 'Silk Math：安装本地截图识别组件',
+        title: fillTemplate(ocr.installing, { product: PRODUCT_NAME }),
         cancellable: true,
       }, (progress, token) => this.pack.install(progress, token));
-      void vscode.window.showInformationMessage('Silk Math 截图识别组件已安装并校验。');
+      void vscode.window.showInformationMessage(fillTemplate(ocr.installed, { product: PRODUCT_NAME }));
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!/取消/.test(message)) void vscode.window.showErrorMessage(`截图识别组件安装失败：${message}`);
+      if (!isCancelledMessage(message)) {
+        void vscode.window.showErrorMessage(fillTemplate(ocr.installFailed, { message }));
+      }
       return false;
     }
   }
 
   private async capture(): Promise<void> {
-    if (!vscode.workspace.getConfiguration('silkMath').get('ocr.enabled', true)) {
-      void vscode.window.showInformationMessage('请先启用 silkMath.ocr.enabled。');
+    if (!vscode.workspace.getConfiguration(COMMAND_NS).get('ocr.enabled', true)) {
+      void vscode.window.showInformationMessage(
+        fillTemplate(uiCopy(vscode.env.language).ocr.enableFirst, { key: `${COMMAND_NS}.ocr.enabled` }),
+      );
       return;
     }
     if (!await this.ensurePack()) return;
@@ -108,15 +116,17 @@ export class OcrController implements vscode.Disposable {
       temporary = true;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      const ocr = uiCopy(vscode.env.language).ocr;
+      const pick = ocr.pickImage;
       const action = await vscode.window.showWarningMessage(
-        `系统截图不可用（${reason}）。可以改为选择已有图片。`,
-        '选择图片',
+        fillTemplate(ocr.screenshotUnavailable, { reason }),
+        pick,
       );
-      if (action !== '选择图片') return;
+      if (action !== pick) return;
       const picked = await vscode.window.showOpenDialog({
         canSelectMany: false,
-        openLabel: '用于本地识别',
-        filters: validImageFilter(),
+        openLabel: ocr.openLabel,
+        filters: validImageFilter(ocr.imageFilter),
       });
       const first = picked?.[0];
       if (!first) return;
@@ -130,12 +140,13 @@ export class OcrController implements vscode.Disposable {
     await this.removeTemporaryCapture();
     this.temporaryCapture = temporaryPath;
 
+    const copy = uiCopy(vscode.env.language);
     const packRoot = vscode.Uri.file(this.pack.rootPath);
     const distRoot = vscode.Uri.joinPath(this.context.extensionUri, 'dist');
     const imageRoot = vscode.Uri.joinPath(image, '..');
     const panel = vscode.window.createWebviewPanel(
-      'silkMath.ocr',
-      'Silk Math · 截图识别',
+      `${COMMAND_NS}.ocr`,
+      fillTemplate(copy.ocr.panelTitle, { product: PRODUCT_NAME }),
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
@@ -160,9 +171,12 @@ export class OcrController implements vscode.Disposable {
     const ortBase = `${webview.asWebviewUri(vscode.Uri.file(join(this.pack.rootPath, 'ort'))).toString()}/`;
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'ocr-webview.js'));
     const token = nonce();
+    const copy = uiCopy(vscode.env.language);
     const config: OcrWebviewConfig = {
       imageUri: webview.asWebviewUri(image).toString(),
       ortWasmBase: ortBase,
+      htmlLang: copy.htmlLang,
+      copy: copy.ocr,
       formula: {
         encoder: local(join('models', 'mfr_encoder.onnx')),
         decoder: local(join('models', 'mfr_decoder.onnx')),
@@ -175,9 +189,9 @@ export class OcrController implements vscode.Disposable {
       },
     };
     return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="${copy.htmlLang}"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; connect-src ${webview.cspSource} blob:; worker-src ${webview.cspSource} blob:; style-src 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${token}' 'wasm-unsafe-eval';">
-<title>Silk Math 截图识别</title></head><body>
+<title>${fillTemplate(copy.ocr.panelTitle, { product: PRODUCT_NAME })}</title></head><body>
 <script nonce="${token}">globalThis.__SILK_MATH_OCR__=${escapeInlineJson(config)};</script>
 <script nonce="${token}" src="${runtime}"></script>
 <script nonce="${token}" src="${script}"></script>
@@ -204,14 +218,16 @@ export class OcrController implements vscode.Disposable {
     if (message.type === 'action') {
       if (message.action === 'copy') {
         await vscode.env.clipboard.writeText(message.text);
-        void vscode.window.showInformationMessage('识别结果已复制。');
+        void vscode.window.showInformationMessage(uiCopy(vscode.env.language).ocr.copied);
       } else {
         await this.insertAtTarget(message.text, target);
       }
       return;
     }
     if (message.type === 'error') {
-      void vscode.window.showErrorMessage(`截图识别：${message.message}`);
+      void vscode.window.showErrorMessage(
+        fillTemplate(uiCopy(vscode.env.language).ocr.errorPrefix, { message: message.message }),
+      );
     }
   }
 
@@ -219,7 +235,7 @@ export class OcrController implements vscode.Disposable {
     const fallback = vscode.window.activeTextEditor;
     const resolved = target ?? (fallback ? { uri: fallback.document.uri, position: fallback.selection.active } : undefined);
     if (!resolved) {
-      void vscode.window.showWarningMessage('没有可插入的活动编辑器；请使用“复制”。');
+      void vscode.window.showWarningMessage(uiCopy(vscode.env.language).ocr.noEditor);
       return;
     }
     const document = await vscode.workspace.openTextDocument(resolved.uri);
@@ -229,7 +245,7 @@ export class OcrController implements vscode.Disposable {
     const edit = new vscode.WorkspaceEdit();
     edit.insert(resolved.uri, position, text);
     if (!await vscode.workspace.applyEdit(edit)) {
-      void vscode.window.showErrorMessage('无法把识别结果插入目标文档。');
+      void vscode.window.showErrorMessage(uiCopy(vscode.env.language).ocr.insertFailed);
       return;
     }
     const editor = await vscode.window.showTextDocument(document, { preview: false });

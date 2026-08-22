@@ -30,19 +30,52 @@ describe('preview manifest', () => {
     }
   });
 
-  it('详情页默认英文，可用链接切换中文', () => {
+  it('详情页默认英文，可用链接切换常见语言', () => {
     const readme = readFileSync(resolve(process.cwd(), 'README.md'), 'utf8');
-    const english = readme.indexOf('id="english"');
-    const chinese = readme.indexOf('id="chinese"');
-    expect(readme).toContain('href="#english"');
-    expect(readme).toContain('href="#chinese"');
-    expect(english).toBeGreaterThan(-1);
-    expect(chinese).toBeGreaterThan(english);
+    const anchors = [
+      'english',
+      'chinese',
+      'chinese-traditional',
+      'japanese',
+      'korean',
+      'german',
+      'french',
+      'spanish',
+      'portuguese',
+      'russian',
+      'italian',
+    ];
+    let previous = -1;
+    for (const id of anchors) {
+      expect(readme).toContain(`href="#${id}"`);
+      const index = readme.indexOf(`id="${id}"`);
+      expect(index).toBeGreaterThan(previous);
+      previous = index;
+    }
+    expect(readme).toContain('id="languages"');
     expect(readme.trimStart().startsWith('#')).toBe(false);
     const description = (JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as {
       readonly description?: string;
     }).description ?? '';
     expect(description.startsWith('Live math preview')).toBe(true);
+    expect(description.toLowerCase()).toContain('latex');
+    expect(description.toLowerCase()).toContain('jupyter');
+    expect(description.toLowerCase()).toContain('mathjax');
+    expect(readme).toContain('marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview');
+  });
+
+  it('商店分类和关键词覆盖常见搜索词，不超过 30 个', () => {
+    const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as {
+      readonly categories?: readonly string[];
+      readonly keywords?: readonly string[];
+    };
+    expect(manifest.categories).toEqual(['Visualization', 'Notebooks', 'Education']);
+    const keywords = manifest.keywords ?? [];
+    expect(keywords.length).toBeGreaterThan(10);
+    expect(keywords.length).toBeLessThanOrEqual(30);
+    for (const term of ['latex', 'mathjax', 'jupyter', 'markdown', 'equation', 'ocr']) {
+      expect(keywords).toContain(term);
+    }
   });
 
   it('不贡献任何工作区视图，避免点击状态栏打开下方面板或辅助栏', () => {
@@ -91,7 +124,7 @@ describe('preview manifest', () => {
       readonly scripts?: { readonly 'vscode:prepublish'?: string };
     };
     expect(manifest.publisher).toBe('silkmath');
-    expect(manifest.scripts?.['vscode:prepublish']).toBe('npm run build');
+    expect(manifest.scripts?.['vscode:prepublish']).toBe('node scripts/prepublish.mjs');
   });
 
   it('Esc 只在公式浮层可见时关闭预览', () => {

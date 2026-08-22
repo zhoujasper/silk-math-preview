@@ -55,13 +55,15 @@ describe('status flyout', () => {
       .toBe('[LaTeX](command:silkMath.toggleLanguage?%5B%22enableInLatex%22%5D)');
   });
 
-  it('vscode 语言不是中文时卡片用英文', () => {
+  it('vscode 语言不是中文时卡片用对应语言，对不上的用英文', () => {
     expect(isChineseLocale('zh-cn')).toBe(true);
     expect(isChineseLocale('zh-tw')).toBe(true);
     expect(isChineseLocale('en')).toBe(false);
     expect(isChineseLocale('en-us')).toBe(false);
     expect(flyoutCopy('zh-cn').snooze).toBe('推迟');
+    expect(flyoutCopy('zh-tw').snooze).toBe('延後');
     expect(flyoutCopy('en').snooze).toBe('Snooze');
+    expect(flyoutCopy('ja').previewSize).toBe('プレビューサイズ');
     const english = buildStatusFlyoutMarkdown({ ...sample, language: 'en' });
     expect(english).toContain('Preview size');
     expect(english).toContain('Enable in');
@@ -69,6 +71,10 @@ describe('status flyout', () => {
     expect(english).toContain('Pause 5 minutes');
     expect(english).toContain('Exclude this file');
     expect(english).not.toContain('预览大小');
+    const japanese = buildStatusFlyoutMarkdown({ ...sample, language: 'ja' });
+    expect(japanese).toContain('プレビューサイズ');
+    expect(japanese).toContain('一時停止');
+    expect(japanese).not.toContain('Preview size');
   });
 
   it('卡片是状态栏 hover：markdown command 链接，不是 HTML 表格里的 command href', () => {

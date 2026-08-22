@@ -221,21 +221,92 @@ const TABLE_COMMAND_RULES: Readonly<Record<string, CommandRule>> = Object.freeze
   tiny: { required: 0, replace: DROP },
   normalsize: { required: 0, replace: DROP },
   tabularnewline: { required: 0, replace: () => '\\\\' },
-  multicolumn: {
-    required: 3,
-    replace: (args) => {
-      const span = Math.min(MAX_COLUMN_REPEAT, Math.max(1, Number.parseInt(args[0] ?? '1', 10) || 1));
-      return `${args[2] ?? ''}${'&'.repeat(span - 1)}`;
-    },
-  },
-  multirow: { optional: 2, required: 3, replace: (args) => args[2] ?? '' },
 });
+
+const SPAN_CLASS = /silk-span-c(\d+)-r(\d+)-([lcr])/;
+
+export interface TableCellSpan {
+  readonly colspan: number;
+  readonly rowspan: number;
+  readonly align: 'l' | 'c' | 'r';
+}
+
+export function spanClassName(colspan: number, rowspan: number, align: string): string {
+  const columns = Math.min(MAX_COLUMN_REPEAT, Math.max(1, Math.round(colspan) || 1));
+  const rows = Math.min(MAX_COLUMN_REPEAT, Math.max(1, Math.round(rowspan) || 1));
+  const side = /r/i.test(align) && !/c/i.test(align) ? 'r' : /l/i.test(align) ? 'l' : 'c';
+  return `silk-span-c${columns}-r${rows}-${side}`;
+}
+
+export function parseSpanClass(className: string): TableCellSpan | undefined {
+  const match = SPAN_CLASS.exec(className.trim());
+  if (!match) return undefined;
+  return {
+    colspan: Number(match[1]),
+    rowspan: Number(match[2]),
+    align: match[3] as 'l' | 'c' | 'r',
+  };
+}
+
+function wrapSpan(colspan: number, rowspan: number, align: string, inner: string): string {
+  const trimmed = inner.trim();
+  const nested = /^\\class\{(silk-span-c\d+-r\d+-[lcr])\}\{([\s\S]*)\}$/.exec(trimmed);
+  if (nested?.[1] && nested[2] !== undefined) {
+    const previous = parseSpanClass(nested[1]);
+    if (previous) {
+      return wrapSpan(
+        Math.max(colspan, previous.colspan),
+        Math.max(rowspan, previous.rowspan),
+        align || previous.align,
+        nested[2],
+      );
+    }
+  }
+  return `\\class{${spanClassName(colspan, rowspan, align)}}{${inner}}`;
+}
+
+function rewriteSpanCommand(text: string, cursor: number, name: string): { readonly out: string; readonly end: number } | undefined {
+  if (name === 'multicolumn') {
+    let scan = skipSpace(text, cursor + 1 + name.length);
+    const count = readGroup(text, scan);
+    const spec = count ? readGroup(text, skipSpace(text, count.end)) : undefined;
+    const content = spec ? readGroup(text, skipSpace(text, spec.end)) : undefined;
+    if (!count || !spec || !content) return undefined;
+    const span = Math.min(MAX_COLUMN_REPEAT, Math.max(1, Number.parseInt(count.content, 10) || 1));
+    const inner = rewriteTableCommands(content.content);
+    return { out: `${wrapSpan(span, 1, spec.content, inner)}${'&'.repeat(span - 1)}`, end: content.end };
+  }
+  if (name === 'multirow' || name === 'multirowcell' || name === 'multirowhead') {
+    let scan = skipSpace(text, cursor + 1 + name.length);
+    const vpos = readOptional(text, scan);
+    if (vpos) scan = skipSpace(text, vpos.end);
+    const count = readGroup(text, scan);
+    if (!count) return undefined;
+    scan = skipSpace(text, count.end);
+    const width = readGroup(text, scan) ?? readOptional(text, scan);
+    if (!width) return undefined;
+    scan = skipSpace(text, width.end);
+    const bump = readOptional(text, scan);
+    if (bump) scan = skipSpace(text, bump.end);
+    const content = readGroup(text, scan);
+    if (!content) return undefined;
+    const rows = Math.min(MAX_COLUMN_REPEAT, Math.max(1, Number.parseInt(count.content, 10) || 1));
+    return { out: wrapSpan(1, rows, 'c', rewriteTableCommands(content.content)), end: content.end };
+  }
+  return undefined;
+}
 
 function rewriteTableCommands(text: string): string {
   let rewritten = '';
   let cursor = 0;
   while (cursor < text.length) {
     const name = commandNameAt(text, cursor);
+    const span = name === undefined ? undefined : rewriteSpanCommand(text, cursor, name);
+    if (span) {
+      rewritten += span.out;
+      cursor = span.end;
+      continue;
+    }
     const rule = name === undefined ? undefined : TABLE_COMMAND_RULES[name];
     if (name === undefined || rule === undefined) {
       // 整条控制词一次性拷贝，避免命令名被逐字符扫描时误判。
@@ -351,6 +422,18 @@ function translateCell(text: string, depth: number): string {
   let cursor = 0;
   while (cursor < trimmed.length) {
     const name = commandNameAt(trimmed, cursor);
+    if (name === 'class') {
+      let scan = skipSpace(trimmed, cursor + 1 + name.length);
+      const className = readGroup(trimmed, scan);
+      const body = className ? readGroup(trimmed, skipSpace(trimmed, className.end)) : undefined;
+      if (className && body && parseSpanClass(className.content)) {
+        rendered += wrapText(plain);
+        plain = '';
+        rendered += `\\class{${className.content}}{${translateCell(body.content, depth)}}`;
+        cursor = body.end;
+        continue;
+      }
+    }
     if (name !== undefined && CELL_STACK_COMMANDS.has(name)) {
       let scan = skipSpace(trimmed, cursor + 1 + name.length);
       for (let index = 0; index < 2; index += 1) {
@@ -422,4 +505,109 @@ export function buildTableExpression(body: string): string {
     .map((row) => `${row.rules}${row.cells.join('&')}`)
     .join('\\\\');
   return `\\begin{array}{${spec}}${rendered}\\end{array}`;
+}
+
+export type ArrayHlinePlace = 'top' | 'inner' | 'bottom';
+
+export interface ArrayHlineBoundary {
+  readonly count: number;
+  readonly place: ArrayHlinePlace;
+  readonly hasContent: boolean;
+}
+
+function hlinePlace(index: number, hasContent: boolean): ArrayHlinePlace {
+  if (index === 0) return 'top';
+  return hasContent ? 'inner' : 'bottom';
+}
+
+/**
+ * 外层 `array` 每一行开头连续 `\hline` 的条数，以及这条边界在表首/行间/表尾。
+ * MathJax 会把同一边界上的第二条 `\hline` 覆盖掉，渲染器靠这个把线拆开。
+ */
+export function parseArrayHlineBoundaries(expression: string): ArrayHlineBoundary[] {
+  const begin = /\\begin\{array\}/.exec(expression);
+  if (!begin || begin.index === undefined) return [];
+  let cursor = skipSpace(expression, begin.index + begin[0].length);
+  const spec = readGroup(expression, cursor);
+  if (!spec) return [];
+  cursor = spec.end;
+  const boundaries: ArrayHlineBoundary[] = [];
+  let run = 0;
+  let hasContent = false;
+  let braceDepth = 0;
+  let arrayDepth = 1;
+  const flush = (ended: boolean): void => {
+    if (!ended && run === 0 && !hasContent && boundaries.length > 0) return;
+    boundaries.push({
+      count: run,
+      place: hlinePlace(boundaries.length, hasContent),
+      hasContent,
+    });
+    run = 0;
+    hasContent = false;
+  };
+  while (cursor < expression.length) {
+    if (isEscaped(expression, cursor)) {
+      cursor += 1;
+      continue;
+    }
+    if (braceDepth === 0 && expression.startsWith('\\end{array}', cursor)) {
+      arrayDepth -= 1;
+      if (arrayDepth === 0) {
+        flush(true);
+        break;
+      }
+      cursor += '\\end{array}'.length;
+      continue;
+    }
+    if (braceDepth === 0 && expression.startsWith('\\begin{array}', cursor)) {
+      arrayDepth += 1;
+      cursor += '\\begin{array}'.length;
+      continue;
+    }
+    if (arrayDepth !== 1) {
+      cursor += 1;
+      continue;
+    }
+    const character = expression[cursor];
+    if (character === '{') {
+      braceDepth += 1;
+      cursor += 1;
+      continue;
+    }
+    if (character === '}') {
+      braceDepth = Math.max(0, braceDepth - 1);
+      cursor += 1;
+      continue;
+    }
+    if (
+      braceDepth === 0
+      && expression.startsWith('\\hline', cursor)
+      && !/^[A-Za-z@]/.test(expression[cursor + 6] ?? '')
+    ) {
+      run += 1;
+      cursor += 6;
+      continue;
+    }
+    if (braceDepth === 0 && expression.startsWith('\\\\', cursor)) {
+      flush(false);
+      cursor += 2;
+      if (expression[cursor] === '*') cursor += 1;
+      const spacing = readOptional(expression, cursor);
+      if (spacing) cursor = spacing.end;
+      continue;
+    }
+    if (character === '\\') {
+      hasContent = true;
+      cursor += 2;
+      continue;
+    }
+    if (braceDepth === 0 && !/\s/.test(character ?? '')) hasContent = true;
+    cursor += 1;
+  }
+  return boundaries;
+}
+
+export function parseArrayHlineCounts(expression: string): number[] {
+  return parseArrayHlineBoundaries(expression).map((boundary) => boundary.count);
 }

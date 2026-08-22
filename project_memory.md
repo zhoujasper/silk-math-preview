@@ -1,5 +1,63 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-22 商店搜索与介绍（0.1.75）
+
+- 不改名。关键词/分类/README 按 Marketplace 搜索补全。GitHub topics 已改。
+- 0.1.75 正式版 1,225,453 bytes SHA-256
+  `BECA01CB76BE860F74A701EC7A948D0A431110258E7D39F5778CABBD956E14E0`。
+
+## 2026-08-22 常见语言与介绍页（0.1.74）
+
+- README 页内 11 语；UI 跟 `vscode.env.language`。简繁分开。命令标题仍中英并列。
+- 0.1.74 正式版 1,223,654 bytes SHA-256
+  `3DF8B2CC823A5E8B4C3C02BAE4DEB8CDC16401B48A3A4BEE01D13DD8B5889B20`；
+  测试版 1,223,795 bytes SHA-256
+  `57BA27B6B34974CC163439BB544377F56E99516BC16BC3E9EAECE9AC0FB8D5AA`。
+  main bundle 202,297 B（仍低于 200 KiB 硬门 204,800）。
+
+## 2026-08-22 表格合并单元格（0.1.73）
+
+- `\multicolumn` / `\multirow` 预览把文字移到跨列/跨行中心，不再只占第一格。
+
+## 2026-08-22 正式包与测试包分开（0.1.72）
+
+- 测试 VSIX 用独立扩展 ID，避免覆盖商店正式版。命令/配置/状态栏都加 Test 命名空间。
+- 0.1.72 正式版 1,201,814 bytes SHA-256
+  `179DB3EB764E1AEFEC27B352A9708EDD24AD90A2F6FFB8FABAD16F7482471891`；
+  测试版 1,201,950 bytes SHA-256
+  `326EE12C89115ADA8A2A9914B226BF50055DE9A7F66956D76EEBF4A3926691AD`。
+
+## 2026-08-22 inner y 向上配对表首（0.1.71）
+
+- TeX 表首 = max inner y（翻轴后是视口上方）。测试走 `tableRulesInRootSpace`。
+- 0.1.71：`silk-math-preview-0.1.71.vsix` 1,201,523 bytes，
+  SHA-256 `6F0BDB67719A996B28D90901D3C94DFC4F28598838EFBC1DF46F226558B24A6E`。
+  cold p95 `161.6 ms`，warm p95 `32.8 ms`。
+
+## 2026-08-22 表首双线两根填充横线（0.1.70）
+
+- 表首 `\hline\hline` 不再只靠框线凑一对：画出两根 `data-line=h`。
+  TeX 表首 = MathJax inner max y → SVG min-y。
+- 0.1.70：`silk-math-preview-0.1.70.vsix` 1,201,394 bytes，
+  SHA-256 `1A8B0B0C06ABCD1D6903AD9F5700C0E2E183116CD3C3A0D985B6B62D01FB438F`。
+  cold p95 `132.8 ms`，warm p95 `20.0 ms`，scanner p95 `0.84 ms`。
+
+## 2026-08-22 单侧双横线配对（0.1.69）
+
+- 只把 count≥2 的 `\hline` 边界配到表首/行间/表尾的可见线，避免 1:1 对不齐时
+  跳过或画错边。224 tests；覆盖率 `93.56%/87.81%/96.08%`。
+- 0.1.69：`silk-math-preview-0.1.69.vsix` 1,201,306 bytes，
+  SHA-256 `9D89E2D85668DBF0AC9FEFD7533B8F7F10985ECE1A2EDFE7F402680B1C218556`。
+
+## 2026-08-22 双线表格、鼠标点选、未写完公式（0.1.68）
+
+- `\hline\hline` 在 MathJax 里会合成一根；预览按 TeX 计数在 SVG 上拆成紧致双线。
+  `||` 两根近距竖线收到大约一根线宽。滚动条点选仍保持预览，点进公式则立刻更新。
+- 未写完的括号/命令只补渲染副本，同区域失败保留上一帧。
+- 0.1.68：`silk-math-preview-0.1.68.vsix` 1,200,705 bytes，
+  SHA-256 `C48385DB54EDFB1DC6559D2B361D0D3A55136B0B3089EAB34368256075F59DAA`。
+  223 tests；覆盖率 `93.56%/87.82%/96.06%`；cold p95 `137.2 ms`，warm p95 `23.6 ms`。
+
 ## 2026-08-21 GitHub Actions 自动发 Marketplace
 
 - `main` 推送：测试 + 打包；有 `VSCE_PAT` 就 `vsce publish --skip-duplicate`，

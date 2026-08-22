@@ -1,5 +1,52 @@
 # Change Log
 
+## 0.1.75 - 2026-08-22
+
+- 商店介绍和关键词按真实搜索习惯补全：LaTeX / MathJax / Jupyter / Markdown /
+  equation / OCR 等，分类改成 Visualization · Notebooks · Education。名字仍是
+  Silk Math Preview。README 各语言段写明 Marketplace 安装入口。
+
+## 0.1.74 - 2026-08-22
+
+- 介绍页和界面跟上常见语言：英文、简体中文、繁體中文、日本語、한국어、Deutsch、
+  Français、Español、Português、Русский、Italiano。商店仍只有一份 README.md，
+  页内锚点切换。状态栏菜单、卡片和 OCR 按 VS Code 显示语言选文案，对不上的用英文。
+
+## 0.1.73 - 2026-08-22
+
+- 表格 `\multicolumn` / `\multirow`（以及 multirowcell/multirowhead）按跨度把内容
+  移到合并区域中心，不再只占第一格。嵌套的「先跨列再跨行」会合成一次 span。
+
+## 0.1.72 - 2026-08-22
+
+- 打包分成正式版和测试版：`silk-math-preview-<ver>.vsix` 发 Marketplace；
+  `silk-math-preview-test-<ver>.vsix` 本机试装，扩展 ID / 命令 / 设置都和正式版分开，
+  不会覆盖商店里已装的那份。测试包状态栏是 Silk Math Test，快捷键 Ctrl+Alt+Shift+M。
+
+## 0.1.71 - 2026-08-22
+
+- 表格双横线按 MathJax inner y 向上配对：表首是 max y（`scale(1,-1)` 之后才是
+  视口上方 / A 行一侧），表尾是 min y。测试在根坐标里量，不再用属性 y 的 Math.min。
+
+## 0.1.70 - 2026-08-22
+
+- 表首只有 `\hline\hline`、下面行没有横线时，预览画出两根填充的 `data-line=h`
+  横线（框线不算）。TeX 表首对应 MathJax inner 的 max y，翻成 SVG 后是 min-y。
+
+## 0.1.69 - 2026-08-22
+
+- 只有一侧 `\hline\hline`、其余行没有横线时，双线画在那条边界上。不再把含 0
+  的计数和 SVG 槽位 1:1 对齐（对不上会整表跳过，或把线画到错误的边）。
+
+## 0.1.68 - 2026-08-22
+
+- 表格连续 `\hline\hline` 和列格式 `||` 预览成两根不重合的紧致线，间隙大约一根线宽，
+  不再合成一条，也不再空出一整行。
+- 鼠标点选以文档 offset 所在公式为准：点进当前公式立刻更新光标，点进另一条公式
+  立刻切换；只有点在浮层盖住、且那里没有公式的行上（滚动条）才保持当前预览。
+- 公式还没写完时只补渲染副本（补括号/环境、丢掉末尾半截命令），已经写出的部分
+  继续显示；同区域渲染失败保留上一帧。源码绝不改写。
+
 ## 0.1.67 - 2026-08-21
 
 - 点 Silk Math 改回顶部 QuickPick 菜单。勾选留在菜单里立刻变，不再走

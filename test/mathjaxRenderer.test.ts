@@ -453,7 +453,7 @@ A & $1$ & $2$ \\
     expect(() => renderer.render({
       ...options,
       definitionPrelude: '',
-      expression: String.raw`\frac{a`,
+      expression: String.raw`\end{aligned}`,
     })).toThrow();
     expect(renderer.render({
       ...options,

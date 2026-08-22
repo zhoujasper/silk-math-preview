@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { cmd, PRODUCT_NAME } from './core/channel';
 import { DefinitionWorkspace } from './vscode/definitionWorkspace';
 import { registerLanguageFeatures } from './vscode/languageFeatures';
 import { OcrController } from './vscode/ocrController';
@@ -7,7 +8,7 @@ import { PreviewController } from './vscode/previewController';
 import { StatusController } from './vscode/statusController';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel('Silk Math');
+  const output = vscode.window.createOutputChannel(PRODUCT_NAME);
   const definitions = new DefinitionWorkspace(context);
   const status = new StatusController(context);
   const preview = new PreviewController(
@@ -24,23 +25,23 @@ export function activate(context: vscode.ExtensionContext): void {
     status,
     preview,
     ocr,
-    vscode.commands.registerCommand('silkMath.togglePreview', () => {
+    vscode.commands.registerCommand(cmd('togglePreview'), () => {
       const enabled = preview.toggle();
-      void vscode.window.showInformationMessage(`Silk Math 实时预览已${enabled ? '开启' : '暂停'}。`);
+      void vscode.window.showInformationMessage(`${PRODUCT_NAME} 实时预览已${enabled ? '开启' : '暂停'}。`);
     }),
-    vscode.commands.registerCommand('silkMath.dismissPreview', () => {
+    vscode.commands.registerCommand(cmd('dismissPreview'), () => {
       preview.dismiss();
     }),
-    vscode.commands.registerCommand('silkMath.reloadDefinitions', () => {
+    vscode.commands.registerCommand(cmd('reloadDefinitions'), () => {
       definitions.reload();
       preview.refresh();
-      void vscode.window.showInformationMessage('Silk Math 已重新索引当前文档可达的宏和环境。');
+      void vscode.window.showInformationMessage(`${PRODUCT_NAME} 已重新索引当前文档可达的宏和环境。`);
     }),
-    vscode.commands.registerCommand('silkMath.diagnoseFormula', async () => {
+    vscode.commands.registerCommand(cmd('diagnoseFormula'), async () => {
       output.appendLine(await preview.diagnose());
       output.show(true);
     }),
-    vscode.commands.registerCommand('silkMath.showPerformance', () => {
+    vscode.commands.registerCommand(cmd('showPerformance'), () => {
       const stats = preview.stats();
       output.appendLine(JSON.stringify({
         time: new Date().toISOString(),

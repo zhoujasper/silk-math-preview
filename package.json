@@ -1,8 +1,8 @@
 {
   "name": "silk-math-preview",
   "displayName": "Silk Math Preview",
-  "description": "Live math preview that follows your caret. 光标走到哪，公式就在哪渲染。",
-  "version": "0.1.67",
+  "description": "Live math preview that follows your caret. Inline LaTeX, Markdown, Jupyter, and MathJax equations with no compile step. 光标走到哪，公式就在哪渲染。",
+  "version": "0.1.75",
   "publisher": "silkmath",
   "author": {
     "name": "Jasper Zhou",
@@ -27,15 +27,53 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages",
-    "Visualization"
+    "Visualization",
+    "Notebooks",
+    "Education"
   ],
   "keywords": [
     "latex",
-    "markdown",
+    "tex",
     "math",
+    "mathjax",
+    "katex",
+    "markdown",
+    "jupyter",
+    "notebook",
+    "ipynb",
+    "mdx",
+    "formula",
+    "equation",
     "preview",
-    "formula"
+    "live-preview",
+    "math-preview",
+    "latex-preview",
+    "inline-math",
+    "amsmath",
+    "align",
+    "tabular",
+    "ocr",
+    "math-ocr",
+    "screenshot",
+    "quarto",
+    "rmarkdown",
+    "education",
+    "scientific",
+    "overlay",
+    "realtime",
+    "caret"
+  ],
+  "badges": [
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/i/silkmath.silk-math-preview",
+      "href": "https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview",
+      "description": "Visual Studio Marketplace installs"
+    },
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/d/silkmath.silk-math-preview",
+      "href": "https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview",
+      "description": "Visual Studio Marketplace downloads"
+    }
   ],
   "extensionKind": [
     "ui",
@@ -258,7 +296,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
+    "vscode:prepublish": "node scripts/prepublish.mjs",
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
@@ -268,7 +306,10 @@
     "validate:ocr-pack": "node scripts/validate-ocr-pack.mjs",
     "check:size": "node scripts/check-size.mjs",
     "verify": "npm run typecheck && npm run coverage && npm run build && npm run benchmark && npm run check:size",
-    "package": "npm run verify && vsce package && npm run check:size"
+    "package:release": "node scripts/package-channel.mjs release",
+    "package:test": "node scripts/package-channel.mjs test",
+    "package:all": "npm run package:release && npm run package:test",
+    "package": "npm run verify && npm run package:all && npm run check:size"
   },
   "devDependencies": {
     "@mathjax/mathjax-tex-font": "4.1.3",

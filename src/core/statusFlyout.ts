@@ -1,3 +1,8 @@
+import { cmd, PRODUCT_NAME } from './channel';
+import { uiCopy } from './uiLocale';
+
+export { isChineseLocale } from './uiLocale';
+
 /** 预览缩放：与 package.json 的取值范围保持一致。 */
 export const MIN_SCALE = 0.5;
 export const MAX_SCALE = 3;
@@ -39,7 +44,7 @@ export interface StatusFlyoutState {
   readonly ocrEnabled: boolean;
   /** 深色主题用深色控件；浅色反过来。默认按深色。 */
   readonly dark?: boolean;
-  /** vscode.env.language，zh 开头用中文，其余英文。 */
+  /** vscode.env.language；按常见 UI 语言选文案，对不上的用英文。 */
   readonly language?: string;
   /** 每次刷新递增，逼着工作台 hover 用新内容重绘。 */
   readonly revision?: number;
@@ -65,10 +70,6 @@ export function overlayFlyoutState(state: StatusFlyoutState, pending: FlyoutPend
   return { ...state, ...pending };
 }
 
-export function isChineseLocale(language: string | undefined): boolean {
-  return /^\s*zh\b/i.test(language ?? '');
-}
-
 export interface FlyoutCopy {
   readonly previewSize: string;
   readonly reset: string;
@@ -90,45 +91,25 @@ export interface FlyoutCopy {
 }
 
 export function flyoutCopy(language: string | undefined): FlyoutCopy {
-  if (isChineseLocale(language)) {
-    return {
-      previewSize: '预览大小',
-      reset: '重置',
-      shrink: '缩小 5%',
-      grow: '放大 5%',
-      where: '启用范围',
-      latex: 'LaTeX / TeX',
-      markdown: 'Markdown / MDX',
-      otherFiles: '其他文件类型',
-      previewDefinitions: '定义也预览',
-      snooze: '推迟',
-      snooze5: '暂停 5 分钟',
-      snooze30: '暂停 30 分钟',
-      resume: '恢复',
-      pausedUntil: '暂停到',
-      excludeFile: '排除当前文件',
-      unexcludeFile: '取消排除当前文件',
-      openSettings: '打开设置',
-    };
-  }
+  const copy = uiCopy(language);
   return {
-    previewSize: 'Preview size',
-    reset: 'Reset',
-    shrink: 'Shrink 5%',
-    grow: 'Grow 5%',
-    where: 'Enable in',
-    latex: 'LaTeX / TeX',
-    markdown: 'Markdown / MDX',
-    otherFiles: 'Other file types',
-    previewDefinitions: 'Preview definitions',
-    snooze: 'Snooze',
-    snooze5: 'Pause 5 minutes',
-    snooze30: 'Pause 30 minutes',
-    resume: 'Resume',
-    pausedUntil: 'Paused until',
-    excludeFile: 'Exclude this file',
-    unexcludeFile: 'Undo exclude',
-    openSettings: 'Open settings',
+    previewSize: copy.previewSize,
+    reset: copy.reset,
+    shrink: copy.shrink,
+    grow: copy.grow,
+    where: copy.where,
+    latex: copy.latex,
+    markdown: copy.markdown,
+    otherFiles: copy.otherFiles,
+    previewDefinitions: copy.previewDefinitions,
+    snooze: copy.snooze,
+    snooze5: copy.snooze5,
+    snooze30: copy.snooze30,
+    resume: copy.resume,
+    pausedUntil: copy.pausedUntil,
+    excludeFile: copy.excludeFile,
+    unexcludeFile: copy.unexcludeFile,
+    openSettings: copy.openSettings,
   };
 }
 
@@ -140,14 +121,14 @@ export function flyoutGaugePercent(scale: number): number {
 }
 
 export const FLYOUT_COMMANDS = [
-  'silkMath.toggleLanguage',
-  'silkMath.togglePreviewDefinitions',
-  'silkMath.toggleExcludeFile',
-  'silkMath.snooze',
-  'silkMath.increasePreviewScale',
-  'silkMath.decreasePreviewScale',
-  'silkMath.resetPreviewScale',
-  'silkMath.openSettings',
+  cmd('toggleLanguage'),
+  cmd('togglePreviewDefinitions'),
+  cmd('toggleExcludeFile'),
+  cmd('snooze'),
+  cmd('increasePreviewScale'),
+  cmd('decreasePreviewScale'),
+  cmd('resetPreviewScale'),
+  cmd('openSettings'),
 ] as const;
 
 function fgSpan(inner: string): string {
@@ -196,27 +177,27 @@ export function buildStatusFlyoutMarkdown(state: StatusFlyoutState): string {
   const percent = scaleToDisplayPercent(state.scale);
   const gauge = `data:image/svg+xml;utf8,${encodeURIComponent(gaugeSvg(state.scale, dark))}`;
   const settings = [
-    settingRow(state.enableInLatex, copy.latex, 'silkMath.toggleLanguage', ['enableInLatex']),
-    settingRow(state.enableInMarkdown, copy.markdown, 'silkMath.toggleLanguage', ['enableInMarkdown']),
-    settingRow(state.enableInOtherFiles, copy.otherFiles, 'silkMath.toggleLanguage', ['enableInOtherFiles']),
-    settingRow(state.previewDefinitions, copy.previewDefinitions, 'silkMath.togglePreviewDefinitions'),
+    settingRow(state.enableInLatex, copy.latex, cmd('toggleLanguage'), ['enableInLatex']),
+    settingRow(state.enableInMarkdown, copy.markdown, cmd('toggleLanguage'), ['enableInMarkdown']),
+    settingRow(state.enableInOtherFiles, copy.otherFiles, cmd('toggleLanguage'), ['enableInOtherFiles']),
+    settingRow(state.previewDefinitions, copy.previewDefinitions, cmd('togglePreviewDefinitions')),
   ].join('\n');
 
   const snooze = state.snoozed
-    ? `${chipBtn(copy.resume, 'silkMath.snooze', [0], copy.resume)}&nbsp;&nbsp;${mutedSpan(`${copy.pausedUntil} ${state.snoozeUntilLabel ?? ''}`)}\\`
-    : `${chipBtn(copy.snooze, 'silkMath.snooze', [5], copy.snooze5)}&nbsp;&nbsp;${mutedSpan(copy.snooze5)}\\\n${chipBtn(copy.snooze, 'silkMath.snooze', [30], copy.snooze30)}&nbsp;&nbsp;${mutedSpan(copy.snooze30)}\\`;
+    ? `${chipBtn(copy.resume, cmd('snooze'), [0], copy.resume)}&nbsp;&nbsp;${mutedSpan(`${copy.pausedUntil} ${state.snoozeUntilLabel ?? ''}`)}\\`
+    : `${chipBtn(copy.snooze, cmd('snooze'), [5], copy.snooze5)}&nbsp;&nbsp;${mutedSpan(copy.snooze5)}\\\n${chipBtn(copy.snooze, cmd('snooze'), [30], copy.snooze30)}&nbsp;&nbsp;${mutedSpan(copy.snooze30)}\\`;
 
   const exclude = state.hasDocument
-    ? `\n\n${chipBtn(state.excluded ? copy.unexcludeFile : copy.excludeFile, 'silkMath.toggleExcludeFile', undefined, state.excluded ? copy.unexcludeFile : copy.excludeFile)}\\`
+    ? `\n\n${chipBtn(state.excluded ? copy.unexcludeFile : copy.excludeFile, cmd('toggleExcludeFile'), undefined, state.excluded ? copy.unexcludeFile : copy.excludeFile)}\\`
     : '';
 
   const revision = state.revision !== undefined
     ? `\n\n<!-- r${state.revision} -->${'\u200b'.repeat((state.revision % 7) + 1)}`
     : '';
-  return `${fgSpan('<strong>Silk Math</strong>')}&nbsp;&nbsp;&nbsp;&nbsp;${commandLink(fgSpan('$(gear)'), 'silkMath.openSettings', undefined, copy.openSettings)}\\
+  return `${fgSpan(`<strong>${PRODUCT_NAME}</strong>`)}&nbsp;&nbsp;&nbsp;&nbsp;${commandLink(fgSpan('$(gear)'), cmd('openSettings'), undefined, copy.openSettings)}\\
 
 ${mutedSpan(copy.previewSize)}\\
-${textBtn('−', 'silkMath.decreasePreviewScale', copy.shrink)}&nbsp;&nbsp;${fgSpan(`<strong>${percent}%</strong>`)}&nbsp;&nbsp;${textBtn('+', 'silkMath.increasePreviewScale', copy.grow)}&nbsp;&nbsp;${textBtn(copy.reset, 'silkMath.resetPreviewScale', copy.reset)}\\
+${textBtn('−', cmd('decreasePreviewScale'), copy.shrink)}&nbsp;&nbsp;${fgSpan(`<strong>${percent}%</strong>`)}&nbsp;&nbsp;${textBtn('+', cmd('increasePreviewScale'), copy.grow)}&nbsp;&nbsp;${textBtn(copy.reset, cmd('resetPreviewScale'), copy.reset)}\\
 
 ![${percent}%](${gauge})
 
@@ -343,26 +324,26 @@ export function buildStatusFlyoutSvg(state: StatusFlyoutState, dark: boolean): {
   const yExclude = state.hasDocument ? 198 : 0;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <rect width="${width}" height="${height}" rx="8" fill="${palette.background}" stroke="${palette.border}"/>
-<text x="14" y="26" font-size="13" font-weight="600" fill="${palette.foreground}">Silk Math</text>
-${svgLink('silkMath.openSettings', `<text x="${width - 20}" y="26" text-anchor="end" font-size="14" fill="${palette.muted}">⚙</text>`)}
+<text x="14" y="26" font-size="13" font-weight="600" fill="${palette.foreground}">${PRODUCT_NAME}</text>
+${svgLink(cmd('openSettings'), `<text x="${width - 20}" y="26" text-anchor="end" font-size="14" fill="${palette.muted}">⚙</text>`)}
 <text x="14" y="46" font-size="11" fill="${palette.muted}">${xmlEscape(status)}</text>
 <text x="14" y="72" font-size="11" fill="${palette.muted}">Preview size</text>
 <text x="200" y="72" font-size="12" font-weight="600" fill="${palette.foreground}">${percent}%</text>
-${svgButton(14, 82, 28, 22, '−', 'silkMath.decreasePreviewScale', palette)}
-${svgButton(48, 82, 28, 22, '+', 'silkMath.increasePreviewScale', palette)}
-${svgButton(82, 82, 52, 22, 'Reset', 'silkMath.resetPreviewScale', palette)}
+${svgButton(14, 82, 28, 22, '−', cmd('decreasePreviewScale'), palette)}
+${svgButton(48, 82, 28, 22, '+', cmd('increasePreviewScale'), palette)}
+${svgButton(82, 82, 52, 22, 'Reset', cmd('resetPreviewScale'), palette)}
 <text x="14" y="124" font-size="12" font-family="monospace" fill="${palette.foreground}">${xmlEscape(gauge)}</text>
 <text x="14" y="148" font-size="11" fill="${palette.muted}">Where it runs</text>
-${svgChip(14, 156, 72, 'LaTeX', state.enableInLatex, 'silkMath.toggleLanguage?%5B%22enableInLatex%22%5D', palette)}
-${svgChip(92, 156, 88, 'Markdown', state.enableInMarkdown, 'silkMath.toggleLanguage?%5B%22enableInMarkdown%22%5D', palette)}
-${svgChip(186, 156, 68, 'Other', state.enableInOtherFiles, 'silkMath.toggleLanguage?%5B%22enableInOtherFiles%22%5D', palette)}
-${svgChip(state.hasDocument ? 142 : 14, 198, state.hasDocument ? 110 : 120, 'Defs', state.previewDefinitions, 'silkMath.togglePreviewDefinitions', palette)}
-${state.hasDocument ? `${svgChip(14, yExclude, 120, state.excluded ? 'Un-exclude' : 'Exclude file', state.excluded, 'silkMath.toggleExcludeFile', palette)}` : ''}
+${svgChip(14, 156, 72, 'LaTeX', state.enableInLatex, `${cmd('toggleLanguage')}?%5B%22enableInLatex%22%5D`, palette)}
+${svgChip(92, 156, 88, 'Markdown', state.enableInMarkdown, `${cmd('toggleLanguage')}?%5B%22enableInMarkdown%22%5D`, palette)}
+${svgChip(186, 156, 68, 'Other', state.enableInOtherFiles, `${cmd('toggleLanguage')}?%5B%22enableInOtherFiles%22%5D`, palette)}
+${svgChip(state.hasDocument ? 142 : 14, 198, state.hasDocument ? 110 : 120, 'Defs', state.previewDefinitions, cmd('togglePreviewDefinitions'), palette)}
+${state.hasDocument ? `${svgChip(14, yExclude, 120, state.excluded ? 'Un-exclude' : 'Exclude file', state.excluded, cmd('toggleExcludeFile'), palette)}` : ''}
 ${state.snoozed
-    ? svgChip(14, 226, 100, 'Resume', false, 'silkMath.snooze?%5B0%5D', palette)
-    : `${svgChip(14, 226, 88, 'Snooze 5m', false, 'silkMath.snooze?%5B5%5D', palette)}${svgChip(108, 226, 96, 'Snooze 30m', false, 'silkMath.snooze?%5B30%5D', palette)}`}
-${state.ocrEnabled ? svgChip(14, 254, 88, 'OCR', false, 'silkMath.ocr.capture', palette) : ''}
-${svgChip(state.ocrEnabled ? 108 : 14, 254, 72, 'Settings', false, 'silkMath.openSettings', palette)}
+    ? svgChip(14, 226, 100, 'Resume', false, `${cmd('snooze')}?%5B0%5D`, palette)
+    : `${svgChip(14, 226, 88, 'Snooze 5m', false, `${cmd('snooze')}?%5B5%5D`, palette)}${svgChip(108, 226, 96, 'Snooze 30m', false, `${cmd('snooze')}?%5B30%5D`, palette)}`}
+${state.ocrEnabled ? svgChip(14, 254, 88, 'OCR', false, cmd('ocr.capture'), palette) : ''}
+${svgChip(state.ocrEnabled ? 108 : 14, 254, 72, 'Settings', false, cmd('openSettings'), palette)}
 </svg>`;
   return { svg, width, height };
 }

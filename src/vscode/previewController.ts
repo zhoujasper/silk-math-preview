@@ -8,8 +8,11 @@ import {
   isDefinitionOnlySource,
   withDefinitionPreviewSample,
 } from '../core/definitionPreview';
+import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
+import { recoverIncompleteTex } from '../core/incompleteTex';
 import { advanceMarkdownFenceState, findMathRegionAt, mathRegionContent, regionContainsOffset, scanMathRegions, selectionOverlapsRegion } from '../core/mathScanner';
 import { buildPreviewExpression } from '../core/previewExpression';
+import { decidePreviewSelection, shouldRetainLastPreviewFrame, type SelectionChangeKind } from '../core/previewSelection';
 import {
   floatingPreviewLayout,
   MONO_CHAR_WIDTH_RATIO,
@@ -108,7 +111,7 @@ interface PreviewSettings {
 
 /** 配置在每次按键的热路径上要读五六次，缓存下来，只在配置变更时重读。 */
 function readSettings(): PreviewSettings {
-  const config = vscode.workspace.getConfiguration('silkMath');
+  const config = vscode.workspace.getConfiguration(COMMAND_NS);
   return {
     enabled: config.get('enabled', true),
     debounceMs: config.get('debounceMs', 8),
@@ -162,6 +165,13 @@ function percentile(values: readonly number[], ratio: number): number {
   if (values.length === 0) return 0;
   const ordered = [...values].sort((left, right) => left - right);
   return ordered[Math.min(ordered.length - 1, Math.floor((ordered.length - 1) * ratio))] ?? 0;
+}
+
+function selectionChangeKind(kind: vscode.TextEditorSelectionChangeKind | undefined): SelectionChangeKind {
+  if (kind === vscode.TextEditorSelectionChangeKind.Mouse) return 'mouse';
+  if (kind === vscode.TextEditorSelectionChangeKind.Keyboard) return 'keyboard';
+  if (kind === vscode.TextEditorSelectionChangeKind.Command) return 'command';
+  return 'unknown';
 }
 
 function themePalette(): { readonly foreground: string; readonly caret: string } {
@@ -324,7 +334,7 @@ export class PreviewController implements vscode.Disposable {
           this.svgCache.clear();
           this.schedule(vscode.window.activeTextEditor, 0);
         }
-        if (!event.affectsConfiguration('silkMath')) return;
+        if (!event.affectsConfiguration(COMMAND_NS)) return;
         this.settings = readSettings();
         this.metricsCache = undefined;
         this.svgCache.clear();
@@ -376,7 +386,7 @@ export class PreviewController implements vscode.Disposable {
    */
   async diagnose(): Promise<string> {
     const editor = vscode.window.activeTextEditor;
-    const lines: string[] = [`# Silk Math 诊断 · ${new Date().toISOString()}`];
+    const lines: string[] = [`# ${PRODUCT_NAME} 诊断 · ${new Date().toISOString()}`];
     if (!editor) return [...lines, '没有活动编辑器。'].join('\n');
     const document = editor.document;
     const offset = document.offsetAt(editor.selection.active);
@@ -430,12 +440,12 @@ export class PreviewController implements vscode.Disposable {
         ? { recovery: { ...region.recovery, boundary: region.recovery.boundary - region.start } }
         : {}),
     };
-    const expression = buildPreviewExpression(
+    const expression = recoverIncompleteTex(buildPreviewExpression(
       regionSource,
       localRegion,
       offset - region.start,
       this.settings.showCaret,
-    ).expression;
+    ).expression);
     lines.push(`表达式: ${JSON.stringify(expression.slice(0, 400))}`);
 
     const metrics = this.editorMetrics(document);
@@ -526,42 +536,41 @@ export class PreviewController implements vscode.Disposable {
   }
 
   private handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): void {
-    const active = this.activePreview;
-    if (active !== undefined) {
-      if (active.editor !== event.textEditor) {
-        this.clearAllVisible();
-      } else if (this.selectionTouchesRegion(event.textEditor, active.region)) {
-        this.schedule(event.textEditor, 0);
-        return;
-      } else if (
-        event.kind === vscode.TextEditorSelectionChangeKind.Mouse
-        && this.selectionTouchesPreviewOverlay(event.textEditor)
-      ) {
-        // 拖滚动条会把光标落到浮层盖住的源码行上，不能当成离开公式。
-        return;
-      } else {
-        this.clearAllVisible();
-      }
+    const editor = event.textEditor;
+    if (this.activePreview !== undefined && this.activePreview.editor !== editor) {
+      this.clearAllVisible();
     }
-    this.schedule(event.textEditor, 0);
-  }
-
-  private selectionTouchesRegion(editor: vscode.TextEditor, region: MathRegion): boolean {
-    return editor.selections.some((selection) => selectionOverlapsRegion(
-      editor.document.offsetAt(selection.start),
-      editor.document.offsetAt(selection.end),
-      region,
-    ));
-  }
-
-  private selectionTouchesPreviewOverlay(editor: vscode.TextEditor): boolean {
-    const paint = this.lastPaint;
-    if (!paint || paint.editor !== editor || !this.previewVisible) return false;
-    return editor.selections.some((selection) => {
-      const from = Math.min(selection.start.line, selection.end.line);
-      const to = Math.max(selection.start.line, selection.end.line);
-      return from <= paint.overlayEndLine && to >= paint.overlayStartLine;
+    const offset = editor.document.offsetAt(editor.selection.active);
+    const current = this.activePreview?.editor === editor ? this.activePreview.region : undefined;
+    const hit = current && regionContainsOffset(current, offset)
+      ? current
+      : this.peekRegionAt(editor, offset);
+    const overlay = this.lastPaint?.editor === editor
+      ? { startLine: this.lastPaint.overlayStartLine, endLine: this.lastPaint.overlayEndLine }
+      : undefined;
+    const action = decidePreviewSelection({
+      kind: selectionChangeKind(event.kind),
+      offset,
+      offsetLine: editor.selection.active.line,
+      ...(current ? { currentRegion: current } : {}),
+      ...(hit ? { hitRegion: hit } : {}),
+      ...(overlay ? { overlay } : {}),
     });
+    if (action === 'keep-without-clear') return;
+    if (action === 'clear') this.clearAllVisible();
+    this.schedule(editor, 0);
+  }
+
+  /** 点选热路径只做有界扫描，不必等定义快照。未命中时不要清掉当前公式的缓存命中。 */
+  private peekRegionAt(editor: vscode.TextEditor, offset: number): MathRegion | undefined {
+    const snapshot = this.definitions.peekSnapshot?.(editor.document);
+    return this.findCurrentRegion(editor.document, offset, snapshot ?? {
+      fingerprint: '',
+      prelude: '',
+      commands: [],
+      environments: [],
+      limitations: [],
+    }, false);
   }
 
   /** 只挪 decoration 锚点，不重新渲染。滚动时公式首行出视口，浮层必须跟到仍可见的那一行。 */
@@ -662,7 +671,9 @@ export class PreviewController implements vscode.Disposable {
       caretOffset - region.start,
       showCaret && !definitionOnly,
     ).expression;
-    const expression = definitionOnly ? withDefinitionPreviewSample(built, content) : built;
+    const expression = recoverIncompleteTex(
+      definitionOnly ? withDefinitionPreviewSample(built, content) : built,
+    );
     const displayMode = region.kind !== 'dollar-inline' && region.kind !== 'paren-inline';
     const palette = themePalette();
     const metrics = this.editorMetrics(document);
@@ -754,9 +765,10 @@ export class PreviewController implements vscode.Disposable {
     message: string,
   ): void {
     if (!this.settings.showRenderErrors) return;
-    if (this.activePreview?.editor === editor
-      && this.activePreview.region.start === region.start
-      && this.lastDecorationSignature !== undefined) {
+    if (shouldRetainLastPreviewFrame({
+      hasVisibleFrame: this.lastDecorationSignature !== undefined && this.lastPaint?.editor === editor,
+      sameRegion: this.activePreview?.editor === editor && this.activePreview.region.start === region.start,
+    })) {
       // 这条公式已经有可见的上一帧，保留它。
       return;
     }
@@ -920,6 +932,7 @@ export class PreviewController implements vscode.Disposable {
     document: vscode.TextDocument,
     offset: number,
     snapshot: PreviewDefinitionSnapshot,
+    rememberMiss = true,
   ): MathRegion | undefined {
     const hit = this.lastRegionHit;
     if (
@@ -950,7 +963,7 @@ export class PreviewController implements vscode.Disposable {
     if (this.scanSamples.length > 128) this.scanSamples.shift();
     const local = findMathRegionAt(result.regions, offset - base);
     if (!local) {
-      this.lastRegionHit = undefined;
+      if (rememberMiss) this.lastRegionHit = undefined;
       return undefined;
     }
     const region: MathRegion = {
@@ -1017,7 +1030,7 @@ export class PreviewController implements vscode.Disposable {
     cache.version = event.document.version;
   }
 
-  /** 方向只看 silkMath.previewPosition，默认 below。 */
+  /** 方向只看 previewPosition，默认 below。 */
   private previewPlacement(
     editor: vscode.TextEditor,
     startLine: number,
@@ -1226,7 +1239,7 @@ export class PreviewController implements vscode.Disposable {
   private setPreviewVisible(visible: boolean): void {
     if (this.previewVisible === visible) return;
     this.previewVisible = visible;
-    void vscode.commands.executeCommand('setContext', 'silkMath.previewVisible', visible);
+    void vscode.commands.executeCommand('setContext', `${COMMAND_NS}.previewVisible`, visible);
   }
 
   private clearAllVisible(): void {

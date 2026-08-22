@@ -20,6 +20,7 @@ import {
   wrapLatex,
   type MixedOcrLine,
 } from './ocrCompose.js';
+import type { OcrUiCopy } from '../core/uiLocale';
 
 type OcrMode = 'auto' | 'formula' | 'text';
 type PaddleOcrServiceInstance = import(
@@ -30,6 +31,8 @@ type PaddleOcrServiceInstance = import(
 export interface OcrWebviewConfig {
   readonly imageUri: string;
   readonly ortWasmBase: string;
+  readonly htmlLang: string;
+  readonly copy: OcrUiCopy;
   readonly formula: FormulaAssetUrls;
   readonly text: {
     readonly detector: string;
@@ -76,8 +79,28 @@ declare global {
 
 const vscode = acquireVsCodeApi();
 const injectedConfig = globalThis.__SILK_MATH_OCR__;
-if (!injectedConfig) throw new Error('截图识别面板缺少本地资源配置。');
+if (!injectedConfig?.copy) throw new Error('OCR panel is missing local resource config.');
 const config: OcrWebviewConfig = injectedConfig;
+const t = config.copy;
+
+function htmlEscape(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === '&') return '&amp;';
+    if (character === '<') return '&lt;';
+    if (character === '>') return '&gt;';
+    if (character === '"') return '&quot;';
+    return '&#39;';
+  });
+}
+
+function fill(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{([a-zA-Z]+)\}/g, (match, key: string) => {
+    const value = vars[key];
+    return value === undefined ? match : String(value);
+  });
+}
+
+document.documentElement.lang = config.htmlLang;
 
 ort.env.wasm.wasmPaths = config.ortWasmBase;
 ort.env.wasm.numThreads = 1;
@@ -170,30 +193,30 @@ document.body.innerHTML = `
     }
   </style>
   <main>
-    <section class="stage" aria-label="截图框选区域">
-      <div class="canvas-wrap"><canvas id="source" aria-label="拖动鼠标框选要识别的区域"></canvas></div>
+    <section class="stage" aria-label="${htmlEscape(t.stageAria)}">
+      <div class="canvas-wrap"><canvas id="source" aria-label="${htmlEscape(t.canvasAria)}"></canvas></div>
     </section>
     <aside>
       <div class="hdr">
         <div>
-          <h1 class="title">截图识别</h1>
-          <p class="sub">框选公式或文字，结果可编辑后插入。</p>
+          <h1 class="title">${htmlEscape(t.title)}</h1>
+          <p class="sub">${htmlEscape(t.subtitle)}</p>
         </div>
-        <span class="badge">仅本机</span>
+        <span class="badge">${htmlEscape(t.localBadge)}</span>
       </div>
-      <div class="chips" role="tablist" aria-label="识别类型">
-        <button class="chip on" id="auto-mode" role="tab" aria-selected="true">智能</button>
-        <button class="chip" id="formula-mode" role="tab" aria-selected="false">公式</button>
-        <button class="chip" id="text-mode" role="tab" aria-selected="false">文字</button>
+      <div class="chips" role="tablist" aria-label="${htmlEscape(t.modeAria)}">
+        <button class="chip on" id="auto-mode" role="tab" aria-selected="true">${htmlEscape(t.auto)}</button>
+        <button class="chip" id="formula-mode" role="tab" aria-selected="false">${htmlEscape(t.formula)}</button>
+        <button class="chip" id="text-mode" role="tab" aria-selected="false">${htmlEscape(t.text)}</button>
       </div>
-      <button class="primary" id="recognize" disabled>识别选区</button>
+      <button class="primary" id="recognize" disabled>${htmlEscape(t.recognize)}</button>
       <div class="bar" aria-hidden="true"><span id="progress"></span></div>
-      <p class="status" id="status" role="status" aria-live="polite">正在读取截图…</p>
-      <textarea id="result" aria-label="可编辑识别结果" spellcheck="false" placeholder="识别结果会显示在这里"></textarea>
-      <div class="preview" id="preview" aria-label="公式预览"></div>
+      <p class="status" id="status" role="status" aria-live="polite">${htmlEscape(t.readingScreenshot)}</p>
+      <textarea id="result" aria-label="${htmlEscape(t.resultAria)}" spellcheck="false" placeholder="${htmlEscape(t.resultPlaceholder)}"></textarea>
+      <div class="preview" id="preview" aria-label="${htmlEscape(t.previewAria)}"></div>
       <div class="actions">
-        <button class="ghost" id="copy" disabled>复制</button>
-        <button class="ghost" id="insert" disabled>插入光标处</button>
+        <button class="ghost" id="copy" disabled>${htmlEscape(t.copy)}</button>
+        <button class="ghost" id="insert" disabled>${htmlEscape(t.insert)}</button>
       </div>
     </aside>
   </main>`;
@@ -253,11 +276,7 @@ function setMode(next: OcrMode): void {
   formulaModeButton.setAttribute('aria-selected', String(next === 'formula'));
   textModeButton.setAttribute('aria-selected', String(next === 'text'));
   preview.hidden = next === 'text';
-  setStatus(next === 'formula'
-    ? '公式模式：输出 LaTeX。'
-    : next === 'text'
-      ? '文字模式：保留换行。'
-      : '智能模式：公式转成 LaTeX，旁白文字一并保留。');
+  setStatus(next === 'formula' ? t.modeFormula : next === 'text' ? t.modeText : t.modeAuto);
 }
 
 function redraw(): void {
@@ -308,7 +327,7 @@ function invertIfDark(target: HTMLCanvasElement): void {
 }
 
 function cropSelection(): HTMLCanvasElement {
-  if (!selection || !selectionHasArea(selection)) throw new Error('请先拖动框选至少 4×4 像素的区域。');
+  if (!selection || !selectionHasArea(selection)) throw new Error(t.needSelection);
   const left = Math.max(0, Math.floor(selection.x));
   const top = Math.max(0, Math.floor(selection.y));
   const width = Math.min(canvas.width - left, Math.max(1, Math.ceil(selection.width)));
@@ -339,7 +358,11 @@ function cropRect(source: HTMLCanvasElement, rect: ImageRect): HTMLCanvasElement
 }
 
 function formulaProgress(progress: FormulaProgress): void {
-  const stageName = progress.stage === 'models' ? '加载公式模型' : progress.stage === 'tokenizer' ? '加载词表' : '解析公式';
+  const stageName = progress.stage === 'models'
+    ? t.loadFormulaModel
+    : progress.stage === 'tokenizer'
+      ? t.loadTokenizer
+      : t.parseFormula;
   setStatus(`${stageName} ${progress.completed}/${progress.total}`);
   setProgress(progress.total > 0 ? progress.completed / progress.total : 0);
   post({ type: 'progress', stage: progress.stage, message: stageName, completed: progress.completed, total: progress.total });
@@ -352,9 +375,9 @@ function getFormulaEngine(): FormulaEngine {
 
 async function getTextService(): Promise<PaddleOcrServiceInstance> {
   if (textService) return textService;
-  setStatus('正在加载本地文字模型…');
+  setStatus(t.loadTextModel);
   setProgress(0.12);
-  post({ type: 'progress', stage: 'text-models', message: '加载本地文字模型', completed: 0, total: 1 });
+  post({ type: 'progress', stage: 'text-models', message: t.loadTextModel, completed: 0, total: 1 });
   const { PaddleOcrService } = await import('ppu-paddle-ocr/web');
   const candidate = new PaddleOcrService({
     model: {
@@ -371,7 +394,7 @@ async function getTextService(): Promise<PaddleOcrServiceInstance> {
     await candidate.initialize();
     textService = candidate;
     setProgress(1);
-    post({ type: 'progress', stage: 'text-models', message: '文字模型已就绪', completed: 1, total: 1 });
+    post({ type: 'progress', stage: 'text-models', message: t.textModelReady, completed: 1, total: 1 });
     return candidate;
   } catch (error) {
     await candidate.destroy().catch(() => undefined);
@@ -404,19 +427,19 @@ async function recognizeFormula(crop: HTMLCanvasElement): Promise<string> {
     ok: recognized.ok,
     usedWasmFallback: recognized.usedWasmFallback,
   });
-  setStatus(recognized.ok ? '公式识别完成，请对照截图复核。' : '结果可能不完整，请缩小选区或改用智能模式。');
+  setStatus(recognized.ok ? t.formulaDone : t.formulaIncomplete);
   if (latex) requestPreview(latex);
   return latex;
 }
 
 async function recognizeText(crop: HTMLCanvasElement): Promise<string> {
   const service = await getTextService();
-  setStatus('正在识别文字…');
+  setStatus(t.recognizingText);
   setProgress(0.55);
-  post({ type: 'progress', stage: 'text-inference', message: '识别文字' });
+  post({ type: 'progress', stage: 'text-inference', message: t.recognizingText });
   const recognized = await service.recognize(crop, { flatten: false, noCache: true, strategy: 'per-line' });
   setProgress(1);
-  setStatus(`文字识别完成，平均置信度 ${Math.round(recognized.confidence * 100)}%。`);
+  setStatus(fill(t.textDone, { percent: Math.round(recognized.confidence * 100) }));
   post({
     type: 'recognize-result',
     mode: 'text',
@@ -428,7 +451,7 @@ async function recognizeText(crop: HTMLCanvasElement): Promise<string> {
 }
 
 async function recognizeAuto(crop: HTMLCanvasElement): Promise<string> {
-  setStatus('智能识别：同时看文字和公式…');
+  setStatus(t.autoWorking);
   const [textResult, formulaResult] = await Promise.all([
     getTextService().then((service) => service.recognize(crop, { flatten: false, noCache: true, strategy: 'per-box' })),
     getFormulaEngine().recognize(crop),
@@ -436,7 +459,7 @@ async function recognizeAuto(crop: HTMLCanvasElement): Promise<string> {
   const wholeLatex = cleanRecognizedLatex(formulaResult.latex);
   if (prefersWholeFormula(textResult.text, wholeLatex, formulaResult.ok)) {
     const wrapped = wrapLatex(wholeLatex);
-    setStatus('已按整段公式识别。');
+    setStatus(t.autoWholeFormula);
     requestPreview(wrapped);
     post({ type: 'recognize-result', mode: 'auto', text: wrapped, ok: formulaResult.ok, usedWasmFallback: formulaResult.usedWasmFallback });
     return wrapped;
@@ -450,7 +473,7 @@ async function recognizeAuto(crop: HTMLCanvasElement): Promise<string> {
     if (lineShouldTryFormula(text) && formulaLines < 8) {
       const union = unionRects(boxes.map((box) => box.box));
       if (union && selectionHasArea(union, 8)) {
-        setStatus(`正在识别第 ${index + 1} 行公式…`);
+        setStatus(fill(t.autoLine, { n: index + 1 }));
         const lineCrop = cropRect(crop, union);
         const recognized = await getFormulaEngine().recognize(lineCrop);
         if (recognized.ok && cleanRecognizedLatex(recognized.latex)) {
@@ -466,7 +489,7 @@ async function recognizeAuto(crop: HTMLCanvasElement): Promise<string> {
   const mixed = composeMixedLines(lines) || textResult.text || wrapLatex(wholeLatex);
   const mathChunks = mixed.match(/\$[^$]+\$|\\\[[\s\S]*?\\\]/g);
   if (mathChunks?.[0]) requestPreview(mathChunks[0]);
-  setStatus(formulaLines > 0 ? '智能识别完成：公式已转成 LaTeX，文字已保留。' : '智能识别完成：这段更像普通文字。');
+  setStatus(formulaLines > 0 ? t.autoDoneMath : t.autoDoneText);
   post({
     type: 'recognize-result',
     mode: 'auto',
@@ -508,7 +531,7 @@ async function recognizeSelection(): Promise<void> {
 function sanitizeAndShowSvg(svgText: string): void {
   const parsed = new DOMParser().parseFromString(svgText, 'image/svg+xml');
   const svg = parsed.documentElement;
-  if (svg.localName !== 'svg' || parsed.querySelector('parsererror')) throw new Error('公式预览不是有效 SVG。');
+  if (svg.localName !== 'svg' || parsed.querySelector('parsererror')) throw new Error(t.invalidPreviewSvg);
   for (const forbidden of Array.from(svg.querySelectorAll('script, foreignObject, iframe, object, embed'))) forbidden.remove();
   for (const node of [svg, ...Array.from(svg.querySelectorAll('*'))]) {
     for (const attribute of Array.from(node.attributes)) {
@@ -542,7 +565,7 @@ function finishSelection(event: PointerEvent): void {
   dragStart = undefined;
   if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   recognizeButton.disabled = !selectionHasArea(selection);
-  setStatus(selectionHasArea(selection) ? '选区已就绪，点击识别。' : '选区太小，请重新框选。');
+  setStatus(selectionHasArea(selection) ? t.selectionReady : t.selectionTooSmall);
   redraw();
 }
 
@@ -568,11 +591,11 @@ window.addEventListener('message', (event: MessageEvent<OcrHostToWebviewMessage>
   const message = event.data;
   if (message.type !== 'formula-preview') return;
   try {
-    if (message.error) preview.textContent = `预览失败：${message.error}`;
+    if (message.error) preview.textContent = fill(t.previewFailed, { message: message.error });
     else if (message.svg) sanitizeAndShowSvg(message.svg);
     else preview.replaceChildren();
   } catch (error) {
-    preview.textContent = `预览失败：${errorMessage(error)}`;
+    preview.textContent = fill(t.previewFailed, { message: errorMessage(error) });
   }
 });
 
@@ -588,11 +611,11 @@ sourceImage.addEventListener('load', () => {
   selection = { x: 0, y: 0, width: canvas.width, height: canvas.height };
   recognizeButton.disabled = !selectionHasArea(selection);
   redraw();
-  setStatus('已选中整张截图。拖动可缩小范围，然后识别。');
+  setStatus(t.wholeImageSelected);
   post({ type: 'ready' });
 });
 sourceImage.addEventListener('error', () => {
-  const message = '无法读取截图，请重新截图或选择图片文件。';
+  const message = t.cannotReadImage;
   setStatus(message);
   post({ type: 'error', message });
 });

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 
+import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
 import { createCompletionCatalog } from '../core/completionCatalog.js';
 import { diagnoseMath } from '../core/diagnostics.js';
 import { findMathRegionAt, mathRegionContent, scanMathRegions } from '../core/mathScanner.js';
@@ -36,7 +37,7 @@ export function registerLanguageFeatures(
 }
 
 class LanguageFeatureController implements vscode.Disposable {
-  private readonly diagnosticCollection = vscode.languages.createDiagnosticCollection('silkMath');
+  private readonly diagnosticCollection = vscode.languages.createDiagnosticCollection(COMMAND_NS);
   private readonly disposables: vscode.Disposable[] = [];
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly scanGeneration = new Map<string, number>();
@@ -69,8 +70,8 @@ class LanguageFeatureController implements vscode.Disposable {
       vscode.workspace.onDidCloseTextDocument((document) => this.forget(document)),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (
-          event.affectsConfiguration('silkMath.customMathEnvironments') ||
-          event.affectsConfiguration('silkMath.quickFixOnType')
+          event.affectsConfiguration(`${COMMAND_NS}.customMathEnvironments`) ||
+          event.affectsConfiguration(`${COMMAND_NS}.quickFixOnType`)
         ) {
           this.scheduleOpenDocuments();
         }
@@ -172,7 +173,7 @@ class LanguageFeatureController implements vscode.Disposable {
     }
     const actions: vscode.CodeAction[] = [];
     for (const vscodeDiagnostic of context.diagnostics) {
-      if (vscodeDiagnostic.source !== 'Silk Math') {
+      if (vscodeDiagnostic.source !== PRODUCT_NAME) {
         continue;
       }
       const code = typeof vscodeDiagnostic.code === 'object'
@@ -238,7 +239,7 @@ class LanguageFeatureController implements vscode.Disposable {
       customMathEnvironments: mergedEnvironments(snapshot),
     }).regions;
     const knownCommands = new Set(snapshot.commands);
-    const typoFixesEnabled = vscode.workspace.getConfiguration('silkMath').get('quickFixOnType', true);
+    const typoFixesEnabled = vscode.workspace.getConfiguration(COMMAND_NS).get('quickFixOnType', true);
     const coreDiagnostics = regions.flatMap((region) =>
       diagnoseMath(mathRegionContent(text, region), { offset: region.contentStart }),
     ).filter((diagnostic) =>
@@ -253,7 +254,7 @@ class LanguageFeatureController implements vscode.Disposable {
         toSeverity(diagnostic.severity),
       );
       item.code = diagnostic.code;
-      item.source = 'Silk Math';
+      item.source = PRODUCT_NAME;
       return item;
     });
     this.fixes.set(key, { version, diagnostics: coreDiagnostics });
@@ -314,7 +315,7 @@ function completionDetail(entry: CompletionEntry, snapshot: DefinitionSnapshot):
 
 function mergedEnvironments(snapshot: DefinitionSnapshot): readonly string[] {
   const configured = vscode.workspace
-    .getConfiguration('silkMath')
+    .getConfiguration(COMMAND_NS)
     .get<readonly string[]>('customMathEnvironments', []);
   return [...new Set([...snapshot.environments, ...configured])];
 }

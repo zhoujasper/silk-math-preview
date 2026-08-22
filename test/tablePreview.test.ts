@@ -6,10 +6,12 @@ import {
   buildTableExpression,
   isTableEnvironment,
   normalizeColumnSpec,
+  parseArrayHlineBoundaries,
+  parseArrayHlineCounts,
   readTablePreamble,
   TABLE_PREVIEW_SCALE,
 } from '../src/core/tablePreview';
-import { MathJaxSvgRenderer } from '../src/render/mathjaxRenderer';
+import { MathJaxSvgRenderer, tableRulesInRootSpace } from '../src/render/mathjaxRenderer';
 
 const booktabs = String.raw`\begin{center}
 \begin{tabular}{ccc}
@@ -27,6 +29,95 @@ function regionAt(source: string, offset: number) {
   if (!region) throw new Error('未扫描到表格区域');
   return region;
 }
+
+interface RuleRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly dataLine: string | undefined;
+  readonly dataFrame: string | undefined;
+  readonly fill: string | undefined;
+}
+
+function parseRuleRects(svg: string): RuleRect[] {
+  return [...svg.matchAll(/<rect\b([^>]*)>/gi)].map((match) => {
+    const attrs = match[1] ?? '';
+    const num = (name: string): number => Number(new RegExp(`\\b${name}="([^"]*)"`, 'i').exec(attrs)?.[1] ?? 'NaN');
+    const attr = (name: string): string | undefined => new RegExp(`\\b${name}="([^"]*)"`, 'i').exec(attrs)?.[1];
+    return {
+      x: num('x'),
+      y: num('y'),
+      width: num('width'),
+      height: num('height'),
+      dataLine: attr('data-line'),
+      dataFrame: attr('data-frame'),
+      fill: attr('fill'),
+    };
+  }).filter((rect) => [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite));
+}
+
+function filledHorizontalRules(svg: string): RuleRect[] {
+  return parseRuleRects(svg).filter((rect) => {
+    if (rect.dataFrame || rect.fill === 'none' || rect.dataLine === 'v') return false;
+    return rect.dataLine === 'h' || rect.width > rect.height * 2;
+  }).sort((left, right) => left.y - right.y || left.x - right.x);
+}
+
+function filledHlineMarks(svg: string): RuleRect[] {
+  return parseRuleRects(svg)
+    .filter((rect) => rect.dataLine === 'h' && rect.fill !== 'none')
+    .sort((left, right) => left.y - right.y || left.x - right.x);
+}
+
+function filledVerticalRules(svg: string): RuleRect[] {
+  return parseRuleRects(svg).filter((rect) => {
+    if (rect.dataFrame || rect.fill === 'none' || rect.dataLine === 'h') return false;
+    return rect.dataLine === 'v' || rect.height > rect.width * 2;
+  }).sort((left, right) => left.x - right.x || left.y - right.y);
+}
+
+function closestPairGap(rects: readonly RuleRect[], axis: 'x' | 'y'): { readonly gap: number; readonly stroke: number } | undefined {
+  let best: { gap: number; stroke: number } | undefined;
+  for (let index = 0; index < rects.length - 1; index += 1) {
+    const first = rects[index]!;
+    const second = rects[index + 1]!;
+    const gap = axis === 'y'
+      ? second.y - (first.y + first.height)
+      : second.x - (first.x + first.width);
+    if (!(gap > 0)) continue;
+    if (!best || gap < best.gap) {
+      best = { gap, stroke: axis === 'y' ? Math.min(first.height, second.height) : Math.min(first.width, second.width) };
+    }
+  }
+  return best;
+}
+
+function renderTable(source: string, at: string) {
+  const region = regionAt(source, source.indexOf(at));
+  const expression = buildPreviewExpression(source, region, source.indexOf(at), false).expression;
+  const renderer = new MathJaxSvgRenderer();
+  const result = renderer.render({
+    displayMode: true,
+    definitionFingerprint: 'table-rules',
+    definitionPrelude: '',
+    foreground: '#d4d4d4',
+    caretColor: '#ffb454',
+    scale: TABLE_PREVIEW_SCALE,
+    exPx: 7,
+    markUnknownCommands: false,
+    expression,
+  });
+  renderer.clear();
+  return { expression, result };
+}
+
+describe('parseArrayHlineCounts', () => {
+  it('只数外层 array 的连续 hline，嵌套表里的线不算', () => {
+    expect(parseArrayHlineCounts('x+y')).toEqual([]);
+    expect(parseArrayHlineCounts(String.raw`\begin{array}{c}\begin{array}{c}\hline x\end{array}\\ \hline y\end{array}`)).toEqual([0, 1]);
+  });
+});
 
 describe('表格环境识别', () => {
   it('tabular 与 longtable 被当作可预览区域，math 环境判定不变', () => {
@@ -70,13 +161,21 @@ describe('buildTableExpression', () => {
     );
   });
 
-  it('multicolumn 补回被吃掉的列，multirow 只留内容', () => {
+  it('multicolumn 补回被吃掉的列，并用 class 标出跨度', () => {
     const expression = buildTableExpression(
       String.raw`{ccc}\hline \multicolumn{2}{c}{合计} & $9$ \\ \multirow{2}{*}{左} & a & b \\`,
     );
-    expect(expression).toContain(String.raw`\text{合计}&&\text{$9$}`);
-    expect(expression).toContain(String.raw`\text{左}&\text{a}&\text{b}`);
+    expect(expression).toContain(String.raw`\class{silk-span-c2-r1-c}{\text{合计}}&&\text{$9$}`);
+    expect(expression).toContain(String.raw`\class{silk-span-c1-r2-c}{\text{左}}&\text{a}&\text{b}`);
     expect(expression.startsWith(String.raw`\begin{array}{ccc}`)).toBe(true);
+  });
+
+  it('嵌套的 multicolumn+multirow 合成一个 span class', () => {
+    const expression = buildTableExpression(
+      String.raw`{cc}\multicolumn{2}{c}{\multirow{2}{*}{总}} \\ & \\`,
+    );
+    expect(expression).toContain('\\class{silk-span-c2-r2-c}');
+    expect(expression).toContain('\\text{总}');
   });
 
   it('makecell/thead 展开成单元格内的纵向 array', () => {
@@ -197,5 +296,170 @@ A & B & C \\
     expect(result.svg).toMatch(/<rect\b[^>]*data-line="v"[^>]*width="70"/i);
     expect(result.svg).toContain('data-c="41');
     renderer.clear();
+  });
+
+  it('连续 \\hline\\hline 画成两根紧致横线，间隙大约一根线宽而不是空行', () => {
+    const double = String.raw`\begin{tabular}{|c|c|}
+\hline\hline
+A & B \\
+\hline\hline
+1 & 2 \\
+\hline\hline
+\end{tabular}`;
+    const single = String.raw`\begin{tabular}{|c|c|}
+\hline
+A & B \\
+\hline
+1 & 2 \\
+\hline
+\end{tabular}`;
+    const { expression, result } = renderTable(double, 'A');
+    expect(expression).toMatch(/\\hline\s*\\hline/);
+    expect(parseArrayHlineCounts(expression)).toEqual([2, 2, 2]);
+    const horizontals = filledHorizontalRules(result.svg);
+    expect(horizontals.length).toBeGreaterThanOrEqual(4);
+    const pair = closestPairGap(horizontals, 'y');
+    expect(pair).toBeDefined();
+    expect(pair!.gap).toBeGreaterThan(0);
+    expect(pair!.gap).toBeLessThanOrEqual(pair!.stroke * 3);
+    const tableHeight = Math.max(...horizontals.map((rect) => rect.y + rect.height))
+      - Math.min(...horizontals.map((rect) => rect.y));
+    expect(pair!.gap).toBeLessThan(tableHeight / 4);
+
+    const control = renderTable(single, 'A');
+    expect(parseArrayHlineCounts(control.expression).every((count) => count <= 1)).toBe(true);
+    const singlePair = closestPairGap(filledHorizontalRules(control.result.svg), 'y');
+    if (singlePair) expect(singlePair.gap).toBeGreaterThan(singlePair.stroke * 3);
+  });
+
+  it('列格式 || 画成两根不重合的紧致竖线', () => {
+    const double = String.raw`\begin{tabular}{||c||c||}
+\hline
+A & B \\
+\hline
+1 & 2 \\
+\hline
+\end{tabular}`;
+    const single = String.raw`\begin{tabular}{|c|c|}
+\hline
+A & B \\
+\hline
+1 & 2 \\
+\hline
+\end{tabular}`;
+    const { expression, result } = renderTable(double, 'A');
+    expect(expression).toContain('{||c||c||}');
+    const verticals = filledVerticalRules(result.svg);
+    expect(verticals.length).toBeGreaterThanOrEqual(2);
+    const xs = [...new Set(verticals.map((rect) => rect.x))];
+    expect(xs.length).toBeGreaterThanOrEqual(2);
+    const pair = closestPairGap(verticals, 'x');
+    expect(pair).toBeDefined();
+    expect(pair!.gap).toBeGreaterThan(0);
+    expect(pair!.gap).toBeLessThanOrEqual(pair!.stroke * 4);
+    const tableWidth = Math.max(...verticals.map((rect) => rect.x + rect.width))
+      - Math.min(...verticals.map((rect) => rect.x));
+    expect(pair!.gap).toBeLessThan(tableWidth / 4);
+
+    const control = renderTable(single, 'A');
+    const singlePair = closestPairGap(filledVerticalRules(control.result.svg), 'x');
+    if (singlePair) expect(singlePair.gap).toBeGreaterThan(singlePair.stroke * 4);
+  });
+
+  it('只有一条边界是 \\hline\\hline、其余行没有横线时，双线画在那条边界上', () => {
+    const topOnly = String.raw`\begin{tabular}{|c|c|}
+\hline\hline
+A & B \\
+C & D \\
+\end{tabular}`;
+    const midOnly = String.raw`\begin{tabular}{|c|c|}
+A & B \\
+\hline\hline
+C & D \\
+\end{tabular}`;
+    const bottomOnly = String.raw`\begin{tabular}{|c|c|}
+A & B \\
+C & D \\
+\hline\hline
+\end{tabular}`;
+
+    expect(parseArrayHlineBoundaries(renderTable(topOnly, 'A').expression)
+      .filter((boundary) => boundary.count >= 2)
+      .map((boundary) => boundary.place)).toEqual(['top']);
+    expect(parseArrayHlineBoundaries(renderTable(midOnly, 'A').expression)
+      .filter((boundary) => boundary.count >= 2)
+      .map((boundary) => boundary.place)).toEqual(['inner']);
+    expect(parseArrayHlineBoundaries(renderTable(bottomOnly, 'A').expression)
+      .filter((boundary) => boundary.count >= 2)
+      .map((boundary) => boundary.place)).toEqual(['bottom']);
+
+    const locate = (source: string) => {
+      const { result } = renderTable(source, 'A');
+      expect(result.svg).toMatch(/scale\(1,-1\)/);
+      const marks = filledHlineMarks(result.svg);
+      expect(marks.length).toBeGreaterThanOrEqual(2);
+      const root = tableRulesInRootSpace(result.svg);
+      const horizontals = root
+        .filter((rule) => rule.dataLine === 'h' && rule.filled)
+        .sort((left, right) => left.visualY - right.visualY);
+      expect(horizontals.length).toBeGreaterThanOrEqual(2);
+      let bestI = 0;
+      let bestGap = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < horizontals.length - 1; index += 1) {
+        const gap = horizontals[index + 1]!.visualY - (horizontals[index]!.visualY + horizontals[index]!.visualHeight);
+        if (gap > 0 && gap < bestGap) {
+          bestGap = gap;
+          bestI = index;
+        }
+      }
+      expect(bestGap).toBeGreaterThan(0);
+      expect(bestGap).toBeLessThanOrEqual(horizontals[bestI]!.visualHeight * 3);
+      const pairMid = (
+        horizontals[bestI]!.visualY + horizontals[bestI + 1]!.visualY + horizontals[bestI + 1]!.visualHeight
+      ) / 2;
+      const ys = root.flatMap((rule) => [rule.visualY, rule.visualY + rule.visualHeight]);
+      const tableTop = Math.min(...ys);
+      const tableBottom = Math.max(...ys);
+      return { pairMid, tableTop, tableBottom, span: tableBottom - tableTop, svg: result.svg };
+    };
+
+    const top = locate(topOnly);
+    // 根坐标 y 向下：更小的 visualY 是视口上方，也是 A 行所在的表首。
+    expect(top.pairMid - top.tableTop).toBeLessThan(top.span / 3);
+    const mid = locate(midOnly);
+    expect(Math.abs(mid.pairMid - (mid.tableTop + mid.tableBottom) / 2)).toBeLessThan(mid.span / 3);
+    const bottom = locate(bottomOnly);
+    expect(bottom.tableBottom - bottom.pairMid).toBeLessThan(bottom.span / 3);
+  });
+
+  it('multicolumn 把内容移到跨列中心，multirow 移到跨行中心', () => {
+    const spanned = String.raw`\begin{tabular}{ccc}
+\multicolumn{2}{c}{合计} & 9 \\
+\multirow{2}{*}{左} & a & b \\
+ & c & d \\
+\end{tabular}`;
+    const plain = String.raw`\begin{tabular}{ccc}
+合计 & 空 & 9 \\
+左 & a & b \\
+下 & c & d \\
+\end{tabular}`;
+    const spannedRender = renderTable(spanned, '合计');
+    const plainRender = renderTable(plain, '合计');
+    expect(spannedRender.expression).toContain('silk-span-c2-r1-c');
+    expect(spannedRender.expression).toContain('silk-span-c1-r2-c');
+    expect(spannedRender.result.svg).toContain('silk-span-c2-r1-c');
+    expect(spannedRender.result.svg).toContain('silk-span-c1-r2-c');
+
+    const spanX = /<g\b[^>]*silk-span-c2-r1-c[^>]*transform="translate\(([-\d.]+)/.exec(spannedRender.result.svg);
+    expect(spanX).toBeTruthy();
+    expect(Number(spanX?.[1])).toBeGreaterThan(100);
+
+    const spanY = /<g\b[^>]*silk-span-c1-r2-c[^>]*transform="translate\(([-\d.]+),\s*([-\d.]+)/.exec(spannedRender.result.svg);
+    expect(spanY).toBeTruthy();
+    expect(Math.abs(Number(spanY?.[2]))).toBeGreaterThan(50);
+
+    expect(plainRender.result.svg).not.toContain('silk-span-c2');
+    expect(spannedRender.result.svg).toContain('合计');
+    expect(spannedRender.result.svg).toContain('data-c="61');
   });
 });

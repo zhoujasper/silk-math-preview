@@ -25,20 +25,21 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Package VSIX
-        run: npx vsce package
+        run: npm run package:all
       - run: npm run check:size
       - name: Inspect VSIX
         run: |
           set -euo pipefail
-          VSIX=$(ls silk-math-preview-*.vsix)
+          VERSION=$(node -p "require('./package.json').version")
+          VSIX="silk-math-preview-${VERSION}.vsix"
+          TEST_VSIX="silk-math-preview-test-${VERSION}.vsix"
           echo "VSIX=$VSIX"
-          npx vsce ls
+          echo "TEST_VSIX=$TEST_VSIX"
           python3 - <<'PY'
-          import glob, zipfile, sys
-          files = glob.glob("silk-math-preview-*.vsix")
-          if len(files) != 1:
-              sys.exit(f"expected one vsix, got {files}")
-          names = zipfile.ZipFile(files[0]).namelist()
+          import json, zipfile, sys
+          version = json.load(open("package.json"))["version"]
+          official = f"silk-math-preview-{version}.vsix"
+          test = f"silk-math-preview-test-{version}.vsix"
           required = (
               "extension/package.json",
               "extension/dist/extension.js",
@@ -46,18 +47,26 @@ jobs:
               "extension/readme.md",
               "extension/media/icon.png",
           )
-          missing = [name for name in required if name not in names]
-          if missing:
-              sys.exit(f"VSIX missing {missing}")
-          banned = [name for name in names if "/test/" in name or name.endswith(".map") or "/src/" in name]
-          if banned:
-              sys.exit(f"VSIX must not include {banned[:8]}")
-          print(f"ok {files[0]} entries={len(names)}")
+          for path, expect_name, expect_private in ((official, "silk-math-preview", False), (test, "silk-math-preview-test", True)):
+              names = zipfile.ZipFile(path).namelist()
+              missing = [name for name in required if name not in names]
+              if missing:
+                  sys.exit(f"{path} missing {missing}")
+              banned = [name for name in names if "/test/" in name or name.endswith(".map") or "/src/" in name]
+              if banned:
+                  sys.exit(f"{path} must not include {banned[:8]}")
+              manifest = json.loads(zipfile.ZipFile(path).read("extension/package.json"))
+              if manifest["name"] != expect_name:
+                  sys.exit(f"{path} name={manifest['name']} expected {expect_name}")
+              if bool(manifest.get("private")) != expect_private:
+                  sys.exit(f"{path} private={manifest.get('private')} expected {expect_private}")
+              print(f"ok {path} entries={len(names)} id={manifest['publisher']}.{manifest['name']}")
           PY
       - uses: actions/upload-artifact@v4
         with:
           name: silk-math-preview-vsix
-          path: silk-math-preview-*.vsix
+          path: |
+            silk-math-preview-*.vsix
           if-no-files-found: error
 
   publish:
@@ -83,7 +92,8 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           set -euo pipefail
-          VSIX=$(ls silk-math-preview-*.vsix)
+          VERSION=$(node -p "require('./package.json').version")
+          VSIX="silk-math-preview-${VERSION}.vsix"
           if [ -z "${VSCE_PAT:-}" ]; then
             echo "::warning::Repository secret VSCE_PAT is not set. Skipping Marketplace publish. See docs/PUBLISH.md"
             exit 0
@@ -95,9 +105,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
-          VSIX=$(ls silk-math-preview-*.vsix)
+          VSIX="silk-math-preview-${VERSION}.vsix"
+          TEST_VSIX="silk-math-preview-test-${VERSION}.vsix"
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" "$VSIX" --clobber
+            gh release upload "$VERSION" "$VSIX" "$TEST_VSIX" --clobber
           else
-            gh release create "$VERSION" "$VSIX" --title "$VERSION" --generate-notes --target "$GITHUB_SHA"
+            gh release create "$VERSION" "$VSIX" "$TEST_VSIX" --title "$VERSION" --generate-notes --target "$GITHUB_SHA"
           fi
