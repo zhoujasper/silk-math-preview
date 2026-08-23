@@ -35,8 +35,11 @@ const SUPPORTED_COMMANDS = new Set([
 ]);
 
 /** 解析根文档和样式文件中的声明式依赖，不展开动态宏生成的路径。 */
-export function parseDependencies(text: string, sourceId = '<memory>'): readonly ParsedDependency[] {
-  const masked = maskTeXComments(text);
+export function parseDependencies(
+  text: string,
+  sourceId = '<memory>',
+  masked = maskTeXComments(text),
+): readonly ParsedDependency[] {
   const lineStarts = collectLineStarts(text);
   const dependencies: ParsedDependency[] = [];
 

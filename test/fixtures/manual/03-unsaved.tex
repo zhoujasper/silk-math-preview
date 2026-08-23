@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{draftlive}
+\usepackage{diskpkg}
+% 案例 C：未保存的 sty。
+% 1. 先点 $\draftCmd$ → 红字（还没有 draftlive.sty）
+% 2. 新建 draftlive.sty，写 \newcommand{\draftCmd}{\beta}，先不保存
+% 3. 再点 $\draftCmd$ → 应是 β
+% 4. 打开 diskpkg.sty 改成 buffer 不保存，点 $\diskCmd$ → 应是 buffer 不是 disk
+
+$\draftCmd$
+
+$\diskCmd$

@@ -1,5 +1,19 @@
 # Silk Math Preview 项目记忆
 
+## 2026-08-23 边写边加宏/大文件热路径（0.1.76）
+
+- 未保存 `.sty`、增量失效、公式打字不误伤上方 `\newcommand`。
+- 0.1.76 正式版 1,226,235 bytes SHA-256
+  `FC2B054113BD38C7519D4DCF68ADA9FBB8CEAE3CD6A735E67F834FC83B934131`。
+
+## 2026-08-22 边写边加宏/宏包（未发版）
+
+- 自定义 `\newcommand` 和本地 `.sty/.cls` 一直支持。这轮修的是热路径：未保存缓冲区、
+  增量失效、大文件解析、超过上限要说明而不是静默丢掉。
+- 不模拟完整 CTAN 宏包。MathJax 仍只有 base/ams/newcommand/color 等。
+- 24 files / 258 tests 全绿。main bundle 204,666 B。cold p95 `142.0 ms`，warm p95 `23.1 ms`。
+  `DefinitionWorkspace` 快照 prelude 接到 `MathJaxSvgRenderer.render` 实画后加的宏。
+
 ## 2026-08-22 商店搜索与介绍（0.1.75）
 
 - 不改名。关键词/分类/README 按 Marketplace 搜索补全。GitHub topics 已改。

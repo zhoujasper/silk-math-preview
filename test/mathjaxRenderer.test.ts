@@ -39,6 +39,34 @@ function expectValidSvg(svg: string): void {
 }
 
 describe('MathJaxSvgRenderer', () => {
+  it('后面新加进 prelude 的宏能真正画出来', () => {
+    const prelude = [
+      String.raw`\newcommand{\early}{\alpha}`,
+      ...Array.from({ length: 80 }, (_, index) => `\\newcommand{\\mac${String.fromCharCode(97 + (index % 26))}${String.fromCharCode(97 + Math.floor(index / 26))}}{x}`),
+      String.raw`\newcommand{\later}{\omega}`,
+    ].join('\n');
+    const renderer = new MathJaxSvgRenderer();
+    expect(() => renderer.render({
+      ...options,
+      definitionFingerprint: 'before-later',
+      definitionPrelude: String.raw`\newcommand{\early}{\alpha}`,
+      markUnknownCommands: false,
+      expression: String.raw`\later`,
+    })).toThrow();
+
+    const result = renderer.render({
+      ...options,
+      definitionFingerprint: 'after-later',
+      definitionPrelude: prelude,
+      markUnknownCommands: false,
+      expression: String.raw`\later+\early`,
+    });
+    expect(result.svg).toContain('<path');
+    expect(result.widthPx).toBeGreaterThan(5);
+    expectValidSvg(result.svg);
+    renderer.clear();
+  });
+
   it('渲染自定义宏与公式内光标为独立 SVG', () => {
     const renderer = new MathJaxSvgRenderer();
     const result = renderer.render({

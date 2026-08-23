@@ -114,21 +114,25 @@ const XPARSE_ENVIRONMENT_DECLARATIONS: Readonly<Record<string, {
 };
 
 /**
- * 用空格遮蔽 TeX 注释，同时保留长度与换行，保证返回的 offset 仍指向原文。
+ * 用空格遮蔽 TeX 注释，同时保留 UTF-16 长度与换行，保证 offset 仍指向原文。
+ * 没有 `%` 时直接返回原字符串，避免大 `.sty` 每次解析都复制整份文本。
  */
 export function maskTeXComments(text: string): string {
-  // split('') 保持 UTF-16 code unit 数量，VS Code offset 才不会在 emoji 后漂移。
-  const chars = text.split('');
-  for (let index = 0; index < chars.length; index += 1) {
-    if (chars[index] !== '%' || isEscaped(text, index)) {
-      continue;
-    }
-    while (index < chars.length && chars[index] !== '\n' && chars[index] !== '\r') {
-      chars[index] = ' ';
-      index += 1;
-    }
+  if (!text.includes('%')) return text;
+  const parts: string[] = [];
+  let last = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== '%' || isEscaped(text, index)) continue;
+    parts.push(text.slice(last, index));
+    const start = index;
+    while (index < text.length && text[index] !== '\n' && text[index] !== '\r') index += 1;
+    parts.push(' '.repeat(index - start));
+    last = index;
+    index -= 1;
   }
-  return chars.join('');
+  if (last === 0) return text;
+  parts.push(text.slice(last));
+  return parts.join('');
 }
 
 /** 读取支持嵌套和转义字符的 TeX 分组，end 为右分隔符后一位。 */
@@ -185,8 +189,11 @@ export function skipTeXWhitespace(text: string, offset: number): number {
 }
 
 /** 解析常见声明式命令和环境；不会执行条件、catcode、expl3 或 LuaTeX。 */
-export function parseDefinitions(text: string, sourceId = '<memory>'): readonly ParsedDefinition[] {
-  const masked = maskTeXComments(text);
+export function parseDefinitions(
+  text: string,
+  sourceId = '<memory>',
+  masked = maskTeXComments(text),
+): readonly ParsedDefinition[] {
   const lineStarts = collectLineStarts(text);
   const definitions: ParsedDefinition[] = [];
 

@@ -4,11 +4,15 @@ import * as vscode from 'vscode';
 
 import { DefinitionIndex, type DefinitionSourceInput } from '../core/definitionIndex.js';
 import type { ParsedDefinition } from '../core/definitionParser.js';
-import { environmentEntersMathMode, parseDefinitions } from '../core/definitionParser.js';
+import { environmentEntersMathMode } from '../core/definitionParser.js';
 import { sanitizeEnvironmentBodyForMathJax } from '../core/previewExpression.js';
 import type { ParsedDependency } from '../core/dependencyParser.js';
-import { parseDependencies } from '../core/dependencyParser.js';
 import { parseMarkdownDefinitionSource, parseNotebookDefinitionSources } from '../core/markdownDefinitions.js';
+import {
+  parseTeXSource,
+  texDocumentEditsAffectDefinitions,
+  type ParsedTexSource,
+} from '../core/texSource.js';
 
 export interface DefinitionSnapshot {
   readonly fingerprint: string;
@@ -30,10 +34,7 @@ export interface DefinitionWorkspaceOptions {
   readonly maxFileBytes?: number;
 }
 
-interface ParsedSource {
-  readonly definitions: readonly ParsedDefinition[];
-  readonly dependencies: readonly ParsedDependency[];
-}
+type ParsedSource = ParsedTexSource;
 
 interface CachedDocumentSource {
   readonly version: number;
@@ -44,6 +45,13 @@ interface CachedSnapshot {
   readonly key: string;
   readonly value: Promise<DefinitionSnapshot>;
 }
+
+interface LoadedFile {
+  readonly parsed?: ParsedSource;
+  readonly limitation?: string;
+}
+
+
 
 interface TraversalState {
   readonly folder: vscode.WorkspaceFolder | undefined;
@@ -56,7 +64,7 @@ interface TraversalState {
 }
 
 const DEFAULT_MAX_FILES = 128;
-const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_FILE_BYTES = 8 * 1024 * 1024;
 const EMPTY_FINGERPRINT = createHash('sha256').update('').digest('hex').slice(0, 16);
 
 /**
@@ -67,7 +75,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
   private readonly maxFileBytes: number;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly documentSources = new Map<string, CachedDocumentSource>();
-  private readonly fileSources = new Map<string, Promise<ParsedSource | undefined>>();
+  private readonly fileSources = new Map<string, Promise<LoadedFile>>();
   private readonly resolutions = new Map<string, Promise<vscode.Uri | undefined>>();
   private readonly snapshots = new Map<string, CachedSnapshot>();
   /** 已经解析完成的快照，供预览热路径同步取用。 */
@@ -88,16 +96,32 @@ export class DefinitionWorkspace implements vscode.Disposable {
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.{tex,sty,cls,md,markdown,mdx,ipynb}');
     this.disposables.push(
       watcher,
-      watcher.onDidChange((uri) => this.invalidate(uri)),
-      watcher.onDidCreate((uri) => this.invalidate(uri)),
-      watcher.onDidDelete((uri) => this.invalidate(uri)),
+      watcher.onDidChange((uri) => this.invalidateSource(uri)),
+      watcher.onDidCreate((uri) => this.invalidateSource(uri, true)),
+      watcher.onDidDelete((uri) => this.invalidateSource(uri, true)),
       vscode.workspace.onDidSaveTextDocument((document) => {
         if (isSupportedDocument(document)) {
-          this.invalidate(document.uri);
+          this.invalidateSource(document.uri);
         }
       }),
       vscode.workspace.onDidChangeNotebookDocument((event) => {
-        this.invalidate(event.notebook.uri);
+        this.invalidateSource(event.notebook.uri);
+      }),
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        if (this.disposed || !isSupportedDocument(event.document) || isIgnoredUri(event.document.uri)) return;
+        this.fileSources.delete(uriKey(event.document.uri));
+        const active = vscode.window.activeTextEditor?.document.uri;
+        if (active && uriKey(active) === uriKey(event.document.uri) && !texDocumentEditsAffectDefinitions(
+          event.document.getText(),
+          event.contentChanges.map((change) => ({
+            start: event.document.offsetAt(change.range.start),
+            inserted: change.text,
+            deleted: change.rangeLength ?? 0,
+          })),
+        )) {
+          return;
+        }
+        this.invalidateSource(event.document.uri);
       }),
     );
   }
@@ -148,7 +172,15 @@ export class DefinitionWorkspace implements vscode.Disposable {
   }
 
   public invalidate(uri?: vscode.Uri): void {
-    if (this.disposed || (uri && isIgnoredUri(uri))) {
+    if (uri) {
+      this.invalidateSource(uri, true);
+      return;
+    }
+    this.resetAll();
+  }
+
+  private resetAll(): void {
+    if (this.disposed) {
       return;
     }
     this.invalidationGeneration += 1;
@@ -156,11 +188,19 @@ export class DefinitionWorkspace implements vscode.Disposable {
     this.resolvedSnapshots.clear();
     this.fileSources.clear();
     this.resolutions.clear();
-    if (uri) {
-      this.documentSources.delete(uriKey(uri));
-    } else {
-      this.documentSources.clear();
+    this.documentSources.clear();
+    this.invalidationEmitter.fire(undefined);
+  }
+
+  private invalidateSource(uri: vscode.Uri, dropResolutions = false): void {
+    if (this.disposed || isIgnoredUri(uri)) {
+      return;
     }
+    this.invalidationGeneration += 1;
+    this.snapshots.clear();
+    this.documentSources.delete(uriKey(uri));
+    this.fileSources.delete(uriKey(uri));
+    if (dropResolutions) this.resolutions.clear();
     this.invalidationEmitter.fire(uri);
   }
 
@@ -268,9 +308,8 @@ export class DefinitionWorkspace implements vscode.Disposable {
 
       for (const entry of timeline) {
         if (entry.kind === 'definition') {
-          const sourceKey = `${key}#definition:${entry.value.source.startOffset}:${state.loadOrder}`;
           state.sourceBatches.push({
-            sourceId: sourceKey,
+            sourceId: `${key}#defs:${entry.value.source.startOffset}:${state.loadOrder}`,
             definitions: [entry.value],
             loadOrder: state.loadOrder,
           });
@@ -292,9 +331,12 @@ export class DefinitionWorkspace implements vscode.Disposable {
           state.limitations.push(`检测到循环依赖，已跳过：${displayUri(target)}`);
           continue;
         }
-        const targetParsed = await this.loadFileSource(target);
-        if (targetParsed) {
-          await this.visitSource(target, targetParsed, state, Number.POSITIVE_INFINITY);
+        const loaded = await this.loadFileSource(target);
+        if (loaded.limitation) {
+          state.limitations.push(loaded.limitation);
+        }
+        if (loaded.parsed) {
+          await this.visitSource(target, loaded.parsed, state, Number.POSITIVE_INFINITY);
         }
       }
     } finally {
@@ -302,26 +344,25 @@ export class DefinitionWorkspace implements vscode.Disposable {
     }
   }
 
-  private loadFileSource(uri: vscode.Uri): Promise<ParsedSource | undefined> {
+  private loadFileSource(uri: vscode.Uri): Promise<LoadedFile> {
     const key = uriKey(uri);
     const cached = this.fileSources.get(key);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
     const value = this.readAndParseFile(uri);
     this.fileSources.set(key, value);
     return value;
   }
 
-  private async readAndParseFile(uri: vscode.Uri): Promise<ParsedSource | undefined> {
+  private async readAndParseFile(uri: vscode.Uri): Promise<LoadedFile> {
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      if (bytes.byteLength > this.maxFileBytes) {
-        return undefined;
+      const open = findOpenDocument(uri);
+      const text = open?.getText() ?? new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+      if (Buffer.byteLength(text, 'utf8') > this.maxFileBytes) {
+        return { limitation: `过大未加载：${displayUri(uri)}` };
       }
-      return parseTeXSource(new TextDecoder().decode(bytes), uriKey(uri));
+      return { parsed: parseTeXSource(text, uriKey(uri)) };
     } catch {
-      return undefined;
+      return {};
     }
   }
 
@@ -355,6 +396,12 @@ export class DefinitionWorkspace implements vscode.Disposable {
   ): Promise<vscode.Uri | undefined> {
     const relativeName = dependencyFileName(dependency);
     const documentFolder = dirnameUri(source);
+    for (const document of vscode.workspace.textDocuments) {
+      if (isIgnoredUri(document.uri) || !uriPathMatchesDependency(document.uri.path, relativeName)) continue;
+      if (isInsideUri(document.uri, documentFolder) || (folder !== undefined && isInsideFolder(document.uri, folder))) {
+        return document.uri;
+      }
+    }
     const candidates = uniqueUris([
       vscode.Uri.joinPath(documentFolder, relativeName),
       ...(folder ? [vscode.Uri.joinPath(folder.uri, relativeName)] : []),
@@ -379,17 +426,6 @@ export class DefinitionWorkspace implements vscode.Disposable {
       .filter((uri) => isInsideFolder(uri, folder) && !isIgnoredUri(uri))
       .sort((left, right) => left.path.localeCompare(right.path))[0];
   }
-}
-
-function parseTeXSource(text: string, sourceId: string): ParsedSource {
-  const definitions = parseDefinitions(text, sourceId);
-  const dependencies = parseDependencies(text, sourceId).filter((dependency) =>
-    !definitions.some((definition) =>
-      dependency.source.startOffset >= definition.source.startOffset &&
-      dependency.source.startOffset < definition.source.endOffset,
-    ),
-  );
-  return { definitions, dependencies };
 }
 
 function snapshotBoundary(parsed: ParsedSource, offset: number): number {
@@ -581,8 +617,24 @@ function isSupportedDocument(document: vscode.TextDocument): boolean {
   return document.languageId === 'latex'
     || document.languageId === 'tex'
     || document.languageId === 'markdown'
-    || document.languageId === 'mdx';
+    || document.languageId === 'mdx'
+    || /\.(?:tex|sty|cls|md|markdown|mdx|ipynb)$/i.test(document.uri.path);
 }
+
+function findOpenDocument(uri: vscode.Uri): vscode.TextDocument | undefined {
+  const key = uriKey(uri);
+  return vscode.workspace.textDocuments.find((document) => uriKey(document.uri) === key);
+}
+
+function uriPathMatchesDependency(path: string, name: string): boolean {
+  if (process.platform === 'win32') {
+    path = path.toLowerCase();
+    name = name.toLowerCase();
+  }
+  return path === name || path.endsWith(`/${name}`);
+}
+
+
 
 function notebookContaining(document: vscode.TextDocument): vscode.NotebookDocument | undefined {
   for (const notebook of vscode.workspace.notebookDocuments) {

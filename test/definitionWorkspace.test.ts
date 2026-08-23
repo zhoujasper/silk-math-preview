@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ files: new Map<string, string>() }));
+const state = vi.hoisted(() => ({
+  files: new Map<string, string>(),
+  openDocuments: [] as Array<{ uri: { path: string; toString(): string }; languageId: string; version: number; getText(): string }>,
+  readCount: 0,
+}));
 
 vi.mock('vscode', () => {
   class MockUri {
@@ -18,7 +22,7 @@ vi.mock('vscode', () => {
     public with(change: { readonly path?: string }): MockUri {
       return new MockUri(this.scheme, this.authority, change.path ?? this.path);
     }
-    public toString(): string {
+    public toString(_skipEncoding?: boolean): string {
       return this.scheme + '://' + this.authority + this.path;
     }
   }
@@ -47,31 +51,49 @@ vi.mock('vscode', () => {
     dispose: () => undefined,
   };
   const folder = { uri: MockUri.file('/ws'), name: 'ws', index: 0 };
+  function lookupFile(path: string): string | undefined {
+    if (state.files.has(path)) return state.files.get(path);
+    if (process.platform === 'win32') {
+      const found = [...state.files.keys()].find((key) => key.toLowerCase() === path.toLowerCase());
+      if (found) return state.files.get(found);
+    }
+    return undefined;
+  }
   return {
     Uri: MockUri,
     EventEmitter: MockEventEmitter,
     FileType: { File: 1 },
     NotebookCellKind: { Markup: 1, Code: 2 },
+    window: {
+      activeTextEditor: undefined,
+    },
     workspace: {
       createFileSystemWatcher: () => watcher,
       onDidSaveTextDocument: noEvent,
       onDidChangeNotebookDocument: noEvent,
+      onDidChangeTextDocument: noEvent,
+      onDidCloseTextDocument: noEvent,
       notebookDocuments: [],
+      get textDocuments() {
+        return state.openDocuments;
+      },
       getWorkspaceFolder: (uri: MockUri) => uri.path.startsWith('/ws/') ? folder : undefined,
       asRelativePath: (uri: MockUri) => uri.path.replace(/^\/ws\//, ''),
       fs: {
         readFile: async (uri: MockUri) => {
-          const value = state.files.get(uri.path);
+          const value = lookupFile(uri.path);
           if (value === undefined) {
             throw new Error('ENOENT');
           }
+          state.readCount += 1;
           return new TextEncoder().encode(value);
         },
         stat: async (uri: MockUri) => {
-          if (!state.files.has(uri.path)) {
+          const value = lookupFile(uri.path);
+          if (value === undefined) {
             throw new Error('ENOENT');
           }
-          return { type: 1, ctime: 0, mtime: 0, size: state.files.get(uri.path)?.length ?? 0 };
+          return { type: 1, ctime: 0, mtime: 0, size: value.length };
         },
       },
       findFiles: async (_include: unknown, _exclude: unknown, maxResults: number) =>
@@ -106,7 +128,11 @@ import * as vscode from 'vscode';
 import { DefinitionWorkspace } from '../src/vscode/definitionWorkspace.js';
 
 describe('DefinitionWorkspace', () => {
-  beforeEach(() => state.files.clear());
+  beforeEach(() => {
+    state.files.clear();
+    state.openDocuments = [];
+    state.readCount = 0;
+  });
 
   it('按光标前声明和递归依赖顺序生成安全 prelude', async () => {
     state.files.set('/ws/local.sty', '\\newcommand{\\pkg}{P}\\input{nested}');
@@ -261,6 +287,254 @@ describe('DefinitionWorkspace', () => {
     workspace.dispose();
   });
 
+  it('写完 newcommand 再写后面的公式，prelude 立刻带上新宏', async () => {
+    const first = '\\newcommand{\\keep}{K}\n$\\keep$';
+    const second = '\\newcommand{\\keep}{K}\n\\newcommand{\\later}{\\alpha}\n$\\later$';
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 4 });
+    const before = await workspace.getSnapshot(makeDocument('/ws/live.tex', 'latex', first, 1), first.length);
+    expect(before.commands).toEqual(['\\keep']);
+    expect(before.prelude).toContain('\\def\\keep{K}');
+
+    const after = await workspace.getSnapshot(makeDocument('/ws/live.tex', 'latex', second, 2), second.length);
+    expect(after.commands).toEqual(['\\keep', '\\later']);
+    expect(after.prelude).toContain('\\def\\later{\\alpha}');
+
+    const withDef = '\\newcommand{\\keep}{K}\n\\def\\fresh{\\beta}\n$\\fresh$';
+    const defined = await workspace.getSnapshot(makeDocument('/ws/live.tex', 'latex', withDef, 3), withDef.length);
+    expect(defined.prelude).toContain('\\def\\fresh{\\beta}');
+    workspace.dispose();
+  });
+
+  it('快照 prelude 交给 MathJax 后，后加的宏能画出来', async () => {
+    const { MathJaxSvgRenderer } = await import('../src/render/mathjaxRenderer.js');
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 4 });
+    const renderer = new MathJaxSvgRenderer();
+    const baseOptions = {
+      displayMode: true,
+      foreground: '#d4d4d4',
+      caretColor: '#ffb454',
+      scale: 1,
+      exPx: 7,
+      markUnknownCommands: false,
+      expression: String.raw`\later`,
+    } as const;
+
+    const missingText = '\\newcommand{\\early}{\\alpha}\n$\\later$';
+    const missingSnap = await workspace.getSnapshot(
+      makeDocument('/ws/live-render.tex', 'latex', missingText, 1),
+      missingText.length,
+    );
+    expect(missingSnap.prelude).not.toContain('later');
+    expect(() => renderer.render({
+      ...baseOptions,
+      definitionFingerprint: missingSnap.fingerprint,
+      definitionPrelude: missingSnap.prelude,
+    })).toThrow();
+
+    const presentText = '\\newcommand{\\early}{\\alpha}\n\\newcommand{\\later}{\\omega}\n$\\later$';
+    const presentSnap = await workspace.getSnapshot(
+      makeDocument('/ws/live-render.tex', 'latex', presentText, 2),
+      presentText.length,
+    );
+    expect(presentSnap.prelude).toContain('\\def\\later{\\omega}');
+    const drawn = renderer.render({
+      ...baseOptions,
+      definitionFingerprint: presentSnap.fingerprint,
+      definitionPrelude: presentSnap.prelude,
+    });
+    expect(drawn.svg.includes('<path') || drawn.svg.includes('<text') || drawn.svg.includes('<rect')).toBe(true);
+    expect(drawn.widthPx).toBeGreaterThan(0);
+    renderer.clear();
+    workspace.dispose();
+  });
+
+  it('大 sty 的快照 prelude 能让 MathJax 画出最后一个宏', async () => {
+    const { MathJaxSvgRenderer } = await import('../src/render/mathjaxRenderer.js');
+    const last = clsLetters(119);
+    const macros = Array.from(
+      { length: 120 },
+      (_, index) => `% c${index}\n\\newcommand{\\${clsLetters(index)}}{\\alpha}`,
+    ).join('\n');
+    state.files.set('/ws/notes.sty', macros);
+    const text = `\\usepackage{notes}\n$\\${last}$`;
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+    const snapshot = await workspace.getSnapshot(makeDocument('/ws/main.tex', 'latex', text), text.length);
+    expect(snapshot.commands).toHaveLength(120);
+    expect(snapshot.prelude).toContain(`\\def\\${last}{\\alpha}`);
+
+    const renderer = new MathJaxSvgRenderer();
+    const drawn = renderer.render({
+      displayMode: true,
+      definitionFingerprint: snapshot.fingerprint,
+      definitionPrelude: snapshot.prelude,
+      foreground: '#d4d4d4',
+      caretColor: '#ffb454',
+      scale: 1,
+      exPx: 7,
+      markUnknownCommands: false,
+      expression: `\\${last}`,
+    });
+    expect(drawn.svg.includes('<path') || drawn.svg.includes('<text') || drawn.svg.includes('<rect')).toBe(true);
+    renderer.clear();
+    workspace.dispose();
+  });
+
+  it('未保存 sty 的缓冲区宏能渲染', async () => {
+    const { MathJaxSvgRenderer } = await import('../src/render/mathjaxRenderer.js');
+    state.openDocuments.push(makeDocument(
+      '/ws/draft.sty',
+      'latex',
+      '\\newcommand{\\draftCmd}{\\beta}',
+    ) as never);
+    const text = '\\usepackage{draft}\n$\\draftCmd$';
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+    const snapshot = await workspace.getSnapshot(makeDocument('/ws/main.tex', 'latex', text), text.length);
+    expect(snapshot.prelude).toContain('\\def\\draftCmd{\\beta}');
+    const renderer = new MathJaxSvgRenderer();
+    const drawn = renderer.render({
+      displayMode: true,
+      definitionFingerprint: snapshot.fingerprint,
+      definitionPrelude: snapshot.prelude,
+      foreground: '#d4d4d4',
+      caretColor: '#ffb454',
+      scale: 1,
+      exPx: 7,
+      markUnknownCommands: false,
+      expression: String.raw`\draftCmd`,
+    });
+    expect(drawn.svg.includes('<path') || drawn.svg.includes('<text') || drawn.svg.includes('<rect')).toBe(true);
+    renderer.clear();
+    workspace.dispose();
+  });
+
+  it('未保存的 sty 也能被 usepackage 加载', async () => {
+    state.openDocuments.push(makeDocument(
+      '/ws/draft.sty',
+      'latex',
+      '\\newcommand{\\draftCmd}{\\beta}',
+    ) as never);
+    const text = '\\usepackage{draft}\n$\\draftCmd$';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+
+    const snapshot = await workspace.getSnapshot(document, text.length);
+
+    expect(snapshot.commands).toContain('\\draftCmd');
+    expect(snapshot.prelude).toContain('\\def\\draftCmd{\\beta}');
+    workspace.dispose();
+  });
+
+  it('未保存缓冲区优先于磁盘上的旧 sty', async () => {
+    state.files.set('/ws/local.sty', '\\newcommand{\\pkg}{disk}');
+    state.openDocuments.push(makeDocument(
+      '/ws/local.sty',
+      'latex',
+      '\\newcommand{\\pkg}{buffer}',
+    ) as never);
+    const text = '\\usepackage{local}\n$\\pkg$';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+
+    const snapshot = await workspace.getSnapshot(document, text.length);
+
+    expect(snapshot.prelude).toContain('\\def\\pkg{buffer}');
+    expect(snapshot.prelude).not.toContain('disk');
+    workspace.dispose();
+  });
+
+  it('只失效变化的依赖，其它 sty 不重新读盘', async () => {
+    state.files.set('/ws/one.sty', '\\newcommand{\\one}{1}');
+    state.files.set('/ws/two.sty', '\\newcommand{\\two}{2}');
+    const text = '\\usepackage{one}\\usepackage{two}\n$\\one+\\two$';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+
+    await workspace.getSnapshot(document, text.length);
+    expect(state.readCount).toBe(2);
+
+    state.files.set('/ws/one.sty', '\\newcommand{\\one}{one}');
+    workspace.invalidate(vscode.Uri.file('/ws/one.sty'));
+    const snapshot = await workspace.getSnapshot(document, text.length);
+
+    expect(snapshot.prelude).toContain('\\def\\one{one}');
+    expect(snapshot.commands).toEqual(expect.arrayContaining(['\\one', '\\two']));
+    expect(state.readCount).toBe(3);
+    workspace.dispose();
+  });
+
+  it('失效后 peek 仍给出上一份快照，直到新快照算完', async () => {
+    state.files.set('/ws/local.sty', '\\newcommand{\\pkg}{P}');
+    const text = '\\usepackage{local}\n$\\pkg$';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+
+    const first = await workspace.getSnapshot(document, text.length);
+    expect(workspace.peekSnapshot(document)).toBe(first);
+
+    state.files.set('/ws/local.sty', '\\newcommand{\\pkg}{Q}');
+    workspace.invalidate(vscode.Uri.file('/ws/local.sty'));
+    expect(workspace.peekSnapshot(document)).toBe(first);
+
+    const second = await workspace.getSnapshot(document, text.length);
+    expect(second.prelude).toContain('\\def\\pkg{Q}');
+    expect(workspace.peekSnapshot(document)).toBe(second);
+    workspace.dispose();
+  });
+
+  it('过大的 sty 留下 limitation，不把整份定义图弄丢', async () => {
+    state.files.set('/ws/huge.sty', `${'\\newcommand{\\hugeCmd}{H}'.repeat(80)}\n`);
+    const text = '\\usepackage{huge}\\newcommand{\\ok}{1}\n$\\ok$';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8, maxFileBytes: 1024 });
+
+    const snapshot = await workspace.getSnapshot(document, text.length);
+
+    expect(snapshot.commands).toContain('\\ok');
+    expect(snapshot.commands).not.toContain('\\hugeCmd');
+    expect(snapshot.limitations.join('\n')).toContain('过大');
+    workspace.dispose();
+  });
+
+  it('光标前才生效：后面的宏不会泄漏进当前公式', async () => {
+    const text = '\\newcommand{\\before}{B}\n$\\before$\n\\newcommand{\\after}{A}';
+    const document = makeDocument('/ws/order.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 4 });
+    const snapshot = await workspace.getSnapshot(document, text.indexOf('$\\before'));
+    expect(snapshot.commands).toEqual(['\\before']);
+    expect(snapshot.commands).not.toContain('\\after');
+    workspace.dispose();
+  });
+
+  it('数千宏的 cls 全部进入 prelude，并且 peek 紧急度可区分', async () => {
+    const last = clsLetters(799);
+    const macros = Array.from({ length: 800 }, (_, index) => `\\newcommand{\\${clsLetters(index)}}{c}`).join('\n');
+    state.files.set('/ws/notes.cls', macros);
+    const text = `\\documentclass{notes}\n$\\${last}$`;
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+
+    const started = performance.now();
+    const snapshot = await workspace.getSnapshot(document, text.length);
+    const elapsed = performance.now() - started;
+
+    expect(snapshot.commands).toHaveLength(800);
+    expect(snapshot.prelude).toContain(`\\def\\${last}{c}`);
+    expect(elapsed).toBeLessThan(200);
+    expect(workspace.peekSnapshot(document)).toBe(snapshot);
+    workspace.dispose();
+  });
+
+  it('Windows 上宏包文件名大小写不敏感', async () => {
+    if (process.platform !== 'win32') return;
+    state.files.set('/ws/Local.sty', '\\newcommand{\\Mixed}{M}');
+    const text = '\\usepackage{local}\n$\\Mixed$';
+    const document = makeDocument('/ws/main.tex', 'latex', text);
+    const workspace = new DefinitionWorkspace(undefined, { maxFiles: 8 });
+    const snapshot = await workspace.getSnapshot(document, text.length);
+    expect(snapshot.commands).toContain('\\Mixed');
+    workspace.dispose();
+  });
+
   it('循环依赖 fail-closed', async () => {
     state.files.set('/ws/a.tex', '\\input{b}\\newcommand{\\a}{a}');
     state.files.set('/ws/b.tex', '\\input{a}\\newcommand{\\b}{b}');
@@ -281,6 +555,7 @@ function makeDocument(
   path: string,
   languageId: 'latex' | 'tex' | 'markdown' | 'mdx',
   text: string,
+  version = 1,
 ): vscode.TextDocument {
   const lines = text.split('\n');
   const starts: number[] = [];
@@ -292,7 +567,7 @@ function makeDocument(
   return {
     uri: vscode.Uri.file(path),
     languageId,
-    version: 1,
+    version,
     getText: () => text,
     lineCount: lines.length,
     lineAt: (line: number) => ({
@@ -301,4 +576,14 @@ function makeDocument(
     offsetAt: (position: { readonly line: number; readonly character: number }) =>
       (starts[position.line] ?? text.length) + position.character,
   } as unknown as vscode.TextDocument;
+}
+
+function clsLetters(index: number): string {
+  let value = index;
+  let name = '';
+  do {
+    name = String.fromCharCode(97 + (value % 26)) + name;
+    value = Math.floor(value / 26) - 1;
+  } while (value >= 0);
+  return `cls${name}`;
 }

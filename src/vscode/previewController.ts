@@ -49,6 +49,7 @@ export interface PreviewDefinitionProvider {
    * （实测 18k 字符的 .tex 每次按键要 2.5~3.9 ms），随后再后台核对一次。
    */
   peekSnapshot?(document: vscode.TextDocument): PreviewDefinitionSnapshot | undefined;
+  readonly onDidInvalidate?: vscode.Event<vscode.Uri | undefined>;
 }
 
 interface CachedSvg {
@@ -321,6 +322,17 @@ export class PreviewController implements vscode.Disposable {
         ? [policy.onDidChange(() => {
           this.clearAllVisible();
           this.schedule(vscode.window.activeTextEditor, 0);
+        })]
+        : []),
+      ...(this.definitions.onDidInvalidate
+        ? [this.definitions.onDidInvalidate(() => {
+          const editor = vscode.window.activeTextEditor;
+          if (!editor) return;
+          this.scheduleDefinitionRefresh(
+            editor,
+            this.definitions.peekSnapshot?.(editor.document)?.fingerprint ?? '',
+            48,
+          );
         })]
         : []),
       vscode.window.onDidChangeActiveColorTheme(() => {
@@ -872,7 +884,11 @@ export class PreviewController implements vscode.Disposable {
    * 快路径用的是上一份定义快照。稍后回头真正解析一次，指纹变了才重画，
    * 因此新写的宏、颜色和环境仍会自动出现，而按键路径始终不做全文解析。
    */
-  private scheduleDefinitionRefresh(editor: vscode.TextEditor, usedFingerprint: string): void {
+  private scheduleDefinitionRefresh(
+    editor: vscode.TextEditor,
+    usedFingerprint: string,
+    delay = DEFINITION_REFRESH_MS,
+  ): void {
     if (this.definitionRefreshTimer) clearTimeout(this.definitionRefreshTimer);
     this.definitionRefreshTimer = setTimeout(() => {
       this.definitionRefreshTimer = undefined;
@@ -887,7 +903,7 @@ export class PreviewController implements vscode.Disposable {
         .catch(() => {
           // 定义暂时不可用时保持当前帧，不清屏。
         });
-    }, DEFINITION_REFRESH_MS);
+    }, delay);
     this.definitionRefreshTimer.unref?.();
   }
 

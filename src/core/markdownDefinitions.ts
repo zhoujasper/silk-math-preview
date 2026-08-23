@@ -1,8 +1,8 @@
 import type { ParsedDefinition } from './definitionParser.js';
 import { parseDefinitions } from './definitionParser.js';
 import type { ParsedDependency } from './dependencyParser.js';
-import { parseDependencies } from './dependencyParser.js';
 import { scanMathRegions } from './mathScanner.js';
+import { parseTeXSource } from './texSource.js';
 import type { TextRange } from './types.js';
 
 export interface MarkdownDefinitionResult {
@@ -53,14 +53,15 @@ export function parseMarkdownDefinitionSource(
     ? maskRange(masked, { start: 0, end: frontMatter.end })
     : masked;
 
+  const tex = parseTeXSource(withoutFrontMatter, sourceId);
   const definitions = [
     ...yamlDefinitions,
-    ...parseDefinitions(withoutFrontMatter, sourceId),
+    ...tex.definitions,
   ].sort((left, right) => left.source.startOffset - right.source.startOffset);
 
   const result = {
     definitions,
-    dependencies: parseDependencies(withoutFrontMatter, sourceId),
+    dependencies: tex.dependencies,
   };
   return frontMatter
     ? { ...result, frontMatterRange: { start: 0, end: frontMatter.end } }

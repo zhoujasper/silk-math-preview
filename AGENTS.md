@@ -1,5 +1,32 @@
 # Silk Math Preview 协作规范
 
+## 2026-08-23 边写边加宏/大文件热路径（0.1.76）
+
+- 当前文件 `\newcommand` / `\def`、未保存 `.sty` 缓冲区、只失效变化的依赖。
+- 公式打字只看光标处控制词，上方已写完的 `\\newcommand` 不再全文失效。
+- 流水线：24 files / 259 tests；覆盖率 stmts/branch/lines `93.45%/87.53%/96.10%`。
+  main bundle 204,665 B。cold p50/p95 `130.1/142.9 ms`，warm p50/p95
+  `12.5/21.1 ms`，scanner p95 `0.77 ms`，idle restart 通过。
+- 产物正式版 `silk-math-preview-0.1.76.vsix` 1,226,235 bytes，SHA-256
+  `FC2B054113BD38C7519D4DCF68ADA9FBB8CEAE3CD6A735E67F834FC83B934131`；
+  测试版 `silk-math-preview-test-0.1.76.vsix` 1,226,367 bytes，SHA-256
+  `D8ABD2B10F91862F6F0F7DFB04EB8B0102CA518AEC2817364A6039C82D451808`。
+
+## 2026-08-22 边写边加宏/宏包，大 sty 也要丝滑
+
+- 用户 `\newcommand` / `\usepackage` / 本地 `.sty/.cls` **本来就能进预览**；缺口是未保存缓冲区、
+  任意文件改动清空全部解析缓存、大文件 `split('')` 复制、超过 2 MB 静默丢掉。
+- 定义解析：`maskTeXComments` 无 `%` 时零拷贝；`parseTeXSource` 一次 mask 扫声明和依赖。
+  4000 条宏 p95 内解析。`.sty/.cls` 上限 8 MB，超限写 limitation，不再默默跳过。
+- 工作区：优先读已打开文档（未保存的 sty 也能用）；只失效变化的那一个来源；
+  peek 在失效后仍保留上一份快照。磁盘 watcher / 文本变更会让预览 48 ms 内重算定义。
+- Windows 宏包文件名大小写不敏感；Linux 保持大小写敏感。不加载 CTAN，不执行 expl3。
+- 公式打字只看光标处控制词，上方已写完的 `\\newcommand` 不再触发全文失效。
+- 流水线：24 files / 259 tests。main bundle 204,665 B（硬门 204,800），不含 MathJax。
+  cold p50/p95 `127.8/143.5 ms`，warm p50/p95 `13.3/23.0 ms`，scanner p95 `1.13 ms`，
+  idle restart 通过。快照 prelude 已接到 MathJax 实画。
+- 本轮未发版、未打 VSIX。
+
 ## 2026-08-22 商店搜索与介绍（0.1.75）
 
 - 名字仍是 Silk Math Preview。`description` / `keywords`（最多 30 个）/ `categories`

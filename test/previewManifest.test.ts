@@ -139,4 +139,12 @@ describe('preview manifest', () => {
       when: 'editorTextFocus && silkMath.previewVisible && !silkMath.flyoutVisible',
     });
   });
+
+  it('打字走 peekSnapshot，定义失效后才重算快照', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/vscode/previewController.ts'), 'utf8');
+    expect(source).toContain('editing ? this.definitions.peekSnapshot?.(document) : undefined');
+    expect(source).toContain('this.definitions.onDidInvalidate');
+    expect(source).toContain('scheduleDefinitionRefresh');
+    expect(source).toContain('fresh.fingerprint !== usedFingerprint');
+  });
 });
