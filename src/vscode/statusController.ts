@@ -9,8 +9,9 @@ import {
   scaleToDisplayPercent,
 } from '../core/statusFlyout';
 import { fillTemplate, uiCopy } from '../core/uiLocale';
+import { ocrCopy } from '../ocr/ocrCopy';
 
-type FlyoutBoolKey = 'enableInLatex' | 'enableInMarkdown' | 'enableInOtherFiles' | 'previewDefinitions';
+type FlyoutBoolKey = 'enableInLatex' | 'enableInMarkdown' | 'enableInOtherFiles' | 'previewDefinitions' | 'tikz.enabled';
 
 export type PreviewLanguage = 'latex' | 'markdown';
 export { DEFAULT_SCALE, MAX_SCALE, MIN_SCALE, SCALE_STEP, scaleToDisplayPercent };
@@ -89,6 +90,7 @@ export class StatusController implements vscode.Disposable {
       vscode.commands.registerCommand(cmd('resetPreviewScale'), () => this.resetPreviewScale()),
       vscode.commands.registerCommand(cmd('toggleLanguage'), (key: unknown) => this.toggleLanguage(key)),
       vscode.commands.registerCommand(cmd('togglePreviewDefinitions'), () => this.togglePreviewDefinitions()),
+      vscode.commands.registerCommand(cmd('toggleTikz'), () => this.toggleTikz()),
       vscode.commands.registerCommand(cmd('toggleExcludeFile'), () => this.toggleExcludeFile()),
       vscode.commands.registerCommand(cmd('snooze'), (minutes: unknown) => {
         if (typeof minutes === 'number' && minutes > 0) this.snooze(minutes);
@@ -120,6 +122,10 @@ export class StatusController implements vscode.Disposable {
     if (isLatex(document)) return this.settingBool('enableInLatex', true, document.uri) ? 'latex' : undefined;
     if (isMarkdown(document)) return this.settingBool('enableInMarkdown', true, document.uri) ? 'markdown' : undefined;
     return this.settingBool('enableInOtherFiles', false, document.uri) ? 'latex' : undefined;
+  }
+
+  public tikzEnabled(document?: vscode.TextDocument): boolean {
+    return this.settingBool('tikz.enabled', false, document?.uri);
   }
 
   public isExcluded(uri: vscode.Uri): boolean {
@@ -180,7 +186,7 @@ export class StatusController implements vscode.Disposable {
   private reconcilePending(): void {
     const uri = vscode.window.activeTextEditor?.document.uri;
     const config = vscode.workspace.getConfiguration(COMMAND_NS, uri);
-    for (const key of ['enableInLatex', 'enableInMarkdown', 'enableInOtherFiles', 'previewDefinitions'] as const) {
+    for (const key of ['enableInLatex', 'enableInMarkdown', 'enableInOtherFiles', 'previewDefinitions', 'tikz.enabled'] as const) {
       if (this.pending[key] !== undefined && config.get(key) === this.pending[key]) delete this.pending[key];
     }
     if (typeof this.pending.previewScale === 'number') {
@@ -232,6 +238,13 @@ export class StatusController implements vscode.Disposable {
     void this.updateSetting('previewDefinitions', next);
   }
 
+  private toggleTikz(): void {
+    const next = !this.tikzEnabled(vscode.window.activeTextEditor?.document);
+    this.pending['tikz.enabled'] = next;
+    this.refresh();
+    void this.updateSetting('tikz.enabled', next);
+  }
+
   private snooze(minutes: number): void {
     this.snoozeUntil = Date.now() + minutes * 60_000;
     if (this.snoozeTimer) clearTimeout(this.snoozeTimer);
@@ -265,7 +278,12 @@ export class StatusController implements vscode.Disposable {
         ? fillTemplate(copy.statusExcluded, vars)
         : fillTemplate(copy.statusClick, vars);
     this.captureItem.name = fillTemplate(copy.captureName, vars);
-    this.captureItem.tooltip = copy.captureTooltip;
+    const ocrTip = new vscode.MarkdownString();
+    ocrTip.appendText(copy.captureTooltip);
+    ocrTip.appendMarkdown(`\n\n[${ocrCopy(vscode.env.language).paste}](command:${cmd('ocr.paste')}) · [${ocrCopy(vscode.env.language).upload}](command:${cmd('ocr.openImage')})`);
+    // 链接完全由扩展生成；沿用本项目已验证可点击的 Markdown command 行为。
+    ocrTip.isTrusted = true;
+    this.captureItem.tooltip = ocrTip;
     this.item.show();
     if (IS_TEST_CHANNEL) {
       this.captureItem.hide();
@@ -373,6 +391,11 @@ export class StatusController implements vscode.Disposable {
         description: copy.previewDefinitionsHint,
         run: () => this.togglePreviewDefinitions(),
       },
+      {
+        label: `${check(this.tikzEnabled(document))} ${copy.tikzPreview}`,
+        description: copy.tikzPreviewHint,
+        run: () => this.toggleTikz(),
+      },
       separator(copy.thisFile),
       ...(document
         ? [{
@@ -398,6 +421,11 @@ export class StatusController implements vscode.Disposable {
           description: copy.ocrCaptureHint,
           closeMenu: true,
           run: () => vscode.commands.executeCommand(cmd('ocr.capture')),
+        }, {
+          label: `$(file-media) ${ocrCopy(vscode.env.language).input}…`,
+          description: ocrCopy(vscode.env.language).pasteHint,
+          closeMenu: true,
+          run: () => vscode.commands.executeCommand(cmd('ocr.open')),
         }]
         : []),
       {
@@ -428,7 +456,7 @@ export class StatusController implements vscode.Disposable {
       }
     }
     if (key === 'previewScale' || key === 'enableInLatex' || key === 'enableInMarkdown'
-      || key === 'enableInOtherFiles' || key === 'previewDefinitions') {
+      || key === 'enableInOtherFiles' || key === 'previewDefinitions' || key === 'tikz.enabled') {
       delete this.pending[key];
     }
     this.refresh();

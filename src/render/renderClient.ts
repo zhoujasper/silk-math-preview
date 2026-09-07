@@ -36,6 +36,7 @@ export class RenderClient {
   constructor(
     private readonly workerPath: string,
     private idleMs: number,
+    private readonly options: { workerData?: unknown; timeoutMs?: number; restartOnFailure?: boolean } = {},
   ) {}
 
   setIdleMs(idleMs: number): void {
@@ -97,12 +98,12 @@ export class RenderClient {
     this.inflight = request;
     const timer = setTimeout(() => {
       if (this.inflight?.id !== request.id) return;
-      const error = new Error('公式渲染超过 10 秒，Worker 已回收');
+      const error = new Error(`渲染超过 ${(this.options.timeoutMs ?? 10_000) / 1000} 秒，Worker 已回收 / Render timed out`);
       const active = this.worker;
       this.worker = undefined;
       this.failPending(error);
       void active?.terminate();
-    }, 10_000);
+    }, this.options.timeoutMs ?? 10_000);
     timer.unref();
     request.timer = timer;
     worker.postMessage({ type: 'render', id: request.id, ...request.payload } satisfies RenderRequest);
@@ -110,10 +111,11 @@ export class RenderClient {
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
-    const worker = new Worker(this.workerPath);
+    const worker = new Worker(this.workerPath, { workerData: this.options.workerData });
     this.worker = worker;
     this.workerStarts++;
     worker.on('message', (response: RenderResponse) => {
+      if (this.worker !== worker) return;
       const request = this.inflight;
       if (!request || request.id !== response.id) return;
       this.inflight = undefined;
@@ -121,6 +123,10 @@ export class RenderClient {
       this.lastRenderMs = response.renderMs;
       if (response.id !== this.latestId) this.staleResponses++;
       request.resolve(response);
+      if (!response.ok && this.options.restartOnFailure) {
+        this.worker = undefined;
+        void worker.terminate();
+      }
       if (this.queued) {
         const next = this.queued;
         this.queued = undefined;

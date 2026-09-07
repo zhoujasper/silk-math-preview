@@ -31,6 +31,41 @@ const KNOWN_COMMAND_ARITY: Readonly<Record<string, number>> = {
   dot: 1, ddot: 1,
 };
 
+/** 数字/单位命令消费的是数据；插入 TeX 光标会破坏指数或格式选项。 */
+const DATA_COMMAND_ARITY: Readonly<Record<string, number>> = {
+  num: 1, numlist: 1, numproduct: 1, numrange: 2, ang: 1,
+  si: 1, unit: 1, SI: 2, qty: 2, SIlist: 2, qtylist: 2,
+  SIproduct: 2, qtyproduct: 2, SIrange: 3, qtyrange: 3,
+};
+
+function dataArgumentSeam(text: string, offset: number): CaretAnchor | undefined {
+  for (let cursor = 0; cursor < text.length;) {
+    const command = readControlSequence(text, cursor);
+    if (!command) { cursor += 1; continue; }
+    cursor = command.end;
+    const arity = DATA_COMMAND_ARITY[command.name];
+    if (!arity) continue;
+    let scan = skipWhitespace(text, command.end);
+    const optional = groupEnd(text, scan, '[', ']');
+    if (optional) scan = skipWhitespace(text, optional);
+    let end = scan;
+    let complete = true;
+    for (let argument = 0; argument < arity; argument += 1) {
+      const prefix = command.name.startsWith('SI') && argument > 0 ? groupEnd(text, scan, '[', ']') : undefined;
+      if (prefix) scan = skipWhitespace(text, prefix);
+      const group = groupEnd(text, scan);
+      if (!group) { complete = false; break; }
+      end = group;
+      scan = skipWhitespace(text, group);
+    }
+    if (complete && offset > command.start && offset <= end) {
+      return { requestedOffset: offset, offset: end, exact: offset === end,
+        reason: 'command-argument-seam', unsafeRange: { start: command.start, end } };
+    }
+  }
+  return undefined;
+}
+
 function isEscaped(text: string, offset: number): boolean {
   let slashCount = 0;
   for (let cursor = offset - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) {
@@ -382,6 +417,8 @@ export function anchorCaret(text: string, requestedOffset: number): CaretAnchor 
     };
   }
 
+  const data = dataArgumentSeam(text, clampedOffset);
+  if (data) return data;
   const unsafe = unsafeSpanAt(text, clampedOffset);
   if (unsafe === undefined) {
     const seam = safeArgumentSeam(text, clampedOffset);

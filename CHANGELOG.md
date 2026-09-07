@@ -1,5 +1,52 @@
 # Change Log
 
+## 0.2.1 - 2026-09-07
+
+- 修复 TikZ 预览拒绝 `compat=1.18`：附带 pgfplots 1.18.3 完整宏源码，升级后自动覆盖旧运行时宏包；保留显式兼容设置和现有 WASM 缓存。
+- 补全分组图、填充、统计图、日期等绘图库，并修复库加载位置、宏包选项冲突、旧式样式、自定义函数和内存数据表声明。
+- 修复 SVG 渐变变黑及纹理丢失；保留绘图样式、定义和符号，检测缺字、缺失图形引用及未支持的驱动功能，避免错误图片被当作成功预览。
+- 修复曲线交点递归参数栈溢出、密集曲面 SVG 嵌套过深；保留交点精度、绘图顺序、颜色与组透明度。
+- 宏包与定义分开建立检查点并共享内存页，外部宏编辑复用宏包；重复文字复用精确轮廓，减少 SVG 大小与传输占用。
+- 增加常见绘图库、复杂连续编辑、请求合并、内存与空闲测试。默认开关仍关闭，保持超时回收和空闲释放。
+
+## 0.2.0 - 2026-09-07
+
+- 版本统一为 0.2.0，包含此前完成的 TikZ / pgfplots 实时渲染、原生宏定义支持及底层性能优化；TikZ 开关仍默认关闭。
+- 正式版与测试版同步使用 0.2.0，继续使用独立的扩展 ID、命令和设置。
+
+## 0.1.81 - 2026-09-07
+
+- TikZ 继承原生 `def/gdef/edef/xdef/let`、定界参数、重定义和作用域；本地及未保存依赖按顺序展开，不再使用普通公式转换后的定义。修复数学分隔符中图形前的定义丢失。
+- 新增完整 TeX 检查点：复用宏包和定义，恢复 WASM 全局/稀疏内存/文件状态；使用同步内存 I/O 和单份 WASM 内存。图形内的全局定义不会污染下一帧。
+- 输入合并降为 80 ms；语法错误保留干净检查点，Esc/关闭/空闲/超时释放 Worker。原生上下文按需加载、图形内编辑不重新提取文档前缀，字体缓存有界。
+- 图形、文本标签及尺寸与优化前进行 SVG 一致性对比；补充真实 TeX 定义、错误恢复、超时恢复、内存和 CPU 验证。默认开关继续关闭。
+
+## 0.1.80 - 2026-09-07
+
+- 数字支持按小数位/有效数字/不确定度舍入、补零、进位和半偶舍入；支持分离不确定度及符号单位的分式、负指数排版。S 列按实际字形宽度对齐小数点。
+- 章节通过 `% !TeX root = ../main.tex` 继承主文件导言区；没有指令时可匹配唯一已打开主文件，不扫描整个工作区。
+- 普通公式输入只读取编辑点前 128 字符，声明之后的输入复用语义快照。依赖过滤由双重遍历改为线性扫描，连续宏成批索引，定义只序列化一次。
+- 单位按需解析并使用有界缓存，移除每个单位重复注入上百条定义。每帧释放 MathJax 解析树/表格布局引用，文件解析、快照和路径缓存增加数量/估算大小上限；超大文件先检查大小，失效的异步遍历及时停止。
+
+## 0.1.79 — TikZ / pgfplots live images
+
+- Add an off-by-default TikZ / pgfplots toggle to the existing status menu and settings. Preview entire pictures while editing LaTeX, Markdown and notebook cells.
+- Render real TeX in an optional local WASM worker; load pgfplots automatically for `axis` / `addplot`. Download pinned, integrity-checked runtime packages once, then render offline.
+- Keep the last successful picture during incomplete edits; coalesce typing, discard stale frames, outline labels, and release idle or timed-out workers. Ordinary math keeps its existing fast renderer.
+
+## 0.1.78 - 2026-09-07
+
+- 修复表格文本单元格原样显示 `\num` 和自定义宏的问题；文本样式、嵌套宏及 `\ensuremath` 可正常展开。
+- 增加常见 siunitx 数字、单位、列表、范围、角度及 `\sisetup`、`\DeclareSIUnit` 的轻量预览；保留长整数、尾零和科学计数法。
+- 自动分析依赖的宏包并启用内置兼容模块；补充 `\gdef`、`\DeclareRobustCommand` 和 `\DeclarePairedDelimiter`；修复已打开同名文件误选与数字参数光标破坏格式。
+
+## 0.1.77 - 2026-09-07
+
+- 截图入口改为系统直接框选，松开后后台自动识别；移除整屏二次裁切的大 Webview。
+- 用原生小菜单复制、插入、编辑和切换识别类型；增加图片粘贴、PNG/JPEG 文件选择及图片 Ctrl+V / ⌘V。
+- OCR 独立 Worker 固定单线程 WASM，所有模型会话串行创建，避免 WebGPU/WASM 交叉初始化报错。取消、错误、超时后重建上下文，空闲释放模型。
+- PNG/JPEG 解码使用纯 JavaScript，平滑缩放保留细笔画；截图临时文件随流程清理。
+
 ## 0.1.76 - 2026-08-23
 
 - 当前文件里新写的 `\newcommand` / `\renewcommand` / `\def`，以及工作区里的

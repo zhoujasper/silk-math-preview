@@ -16,6 +16,9 @@ import '@mathjax/src/js/input/tex/cancel/CancelConfiguration.js';
 import '@mathjax/src/js/input/tex/noundefined/NoUndefinedConfiguration.js';
 
 import { recoverIncompleteTex } from '../core/incompleteTex';
+import { renderPackages } from './packageSupport';
+import { clearSiCaches, SI_OPTIONS_KEY, SI_PRELUDE_KEY } from './siunitx';
+import { alignSiColumns, SI_CELLS_KEY, type SiCell } from './siAlignment';
 import { parseArrayHlineBoundaries, parseSpanClass } from '../core/tablePreview';
 
 const EM = 16;
@@ -32,6 +35,7 @@ export interface SvgRenderOptions {
   readonly displayMode: boolean;
   readonly definitionFingerprint: string;
   readonly definitionPrelude: string;
+  readonly packages?: readonly string[];
   readonly foreground: string;
   readonly caretColor: string;
   /** 输出尺寸的整体缩放；表格等宽内容用它显示得小一档。`exPx` 为 0 时不生效。 */
@@ -52,18 +56,43 @@ export interface SvgRenderResult {
   readonly heightPx: number;
 }
 
+/** MathJax retains the last parse tree and output wrapper after convert().
+ * Keep reusable definitions/fonts, release frame-sized trees as soon as SVG is serialized. */
+class PreviewTeX extends TeX<unknown, unknown, unknown> {
+  releaseFrame(): void {
+    this.parseOptions.clear();
+    this.mathNode = null!;
+    this.latex = '';
+  }
+}
+class PreviewSVG extends SVG<unknown, unknown, unknown> {
+  releaseFrame(): void {
+    this.math = null!;
+    this.table = null!;
+    this.container = null!;
+    this.document = null!;
+    this.nodeMap = null!;
+  }
+}
+
 interface RenderContext {
   readonly document: ReturnType<typeof mathjax.document>;
   readonly adaptor: ReturnType<typeof liteAdaptor>;
-  readonly tex: TeX<unknown, unknown, unknown>;
+  readonly tex: PreviewTeX;
 }
 
 const SHARED_ADAPTOR = liteAdaptor({ fontSize: EM });
 RegisterHTMLHandler(SHARED_ADAPTOR);
-const SHARED_OUTPUT = new SVG({
+const SHARED_OUTPUT = new PreviewSVG({
   fontCache: 'none',
   exFactor: EX / EM,
   fontData: MathJaxTexFont,
+});
+
+SHARED_OUTPUT.preFilters.add((data: unknown) => {
+  const { math } = data as { math: { inputJax: TeX<unknown, unknown, unknown> } };
+  const cells = math.inputJax.parseOptions.packageData.get(SI_CELLS_KEY) as SiCell[] | undefined;
+  if (cells?.length) alignSiColumns(SHARED_OUTPUT, cells);
 });
 
 type CssLengthUnit = 'ex' | 'em' | 'px' | '%';
@@ -1168,7 +1197,6 @@ function withPixelSize(svg: string, widthPx: number, heightPx: number): string {
  * 这里给出语义最接近的近似，宁可样式略有出入也要让公式显示出来。
  */
 const COMPATIBILITY_PRELUDE = [
-  String.raw`\def\ensuremath#1{#1}`,
   String.raw`\def\emph#1{\textit{#1}}`,
   String.raw`\def\textsuperscript#1{^{\text{#1}}}`,
   String.raw`\def\textsubscript#1{_{\text{#1}}}`,
@@ -1192,14 +1220,18 @@ const COMPATIBILITY_PRELUDE = [
   String.raw`\def\arraybackslash{}`,
 ].join('\n');
 
-function createRenderContext(markUnknownCommands: boolean): RenderContext {
-  const tex = new TeX({
+function createRenderContext(markUnknownCommands: boolean, packages: readonly string[]): RenderContext {
+  const tex = new PreviewTeX({
     // noundefined 把未定义命令渲染成红色原文，一个笔误不再让整条公式消失。
     packages: [
       'base', 'ams', 'begingroup', 'newcommand', 'color', 'html', 'boldsymbol', 'cancel',
+      ...packages,
       ...(markUnknownCommands ? ['noundefined'] : []),
     ],
     begingroup: { allowGlobal: [] },
+    textmacros: { packages: ['text-base', 'silk-text-si',
+      ...(packages.includes('silk-qty') ? ['silk-text-qty'] : []),
+    ] },
     maxBuffer: MAX_TEX_BUFFER,
     maxMacros: 2000,
     formatError(_jax: unknown, error: Error): never {
@@ -1214,13 +1246,20 @@ function createRenderContext(markUnknownCommands: boolean): RenderContext {
 }
 
 function applyPrelude(context: RenderContext, prelude: string): void {
-  context.document.convert(prelude, {
-    display: false,
-    em: EM,
-    ex: EX,
-    containerWidth: WIDTH,
-  });
-  context.tex.reset();
+  context.tex.parseOptions.packageData.set(SI_PRELUDE_KEY, true);
+  try {
+    context.document.convert(prelude, {
+      display: false,
+      em: EM,
+      ex: EX,
+      containerWidth: WIDTH,
+    });
+    context.tex.reset();
+  } finally {
+    context.tex.parseOptions.packageData.delete(SI_PRELUDE_KEY);
+    context.tex.releaseFrame();
+    SHARED_OUTPUT.releaseFrame();
+  }
 }
 
 class ContextPool {
@@ -1230,7 +1269,7 @@ class ContextPool {
     return `${markUnknownCommands ? 'nu' : 'strict'}|${fingerprint}`;
   }
 
-  get(fingerprint: string, prelude: string, markUnknownCommands: boolean): RenderContext {
+  get(fingerprint: string, prelude: string, markUnknownCommands: boolean, packages: readonly string[]): RenderContext {
     const key = ContextPool.key(fingerprint, markUnknownCommands);
     const existing = this.contexts.get(key);
     if (existing) {
@@ -1238,7 +1277,7 @@ class ContextPool {
       this.contexts.set(key, existing);
       return existing;
     }
-    const context = this.create(prelude, markUnknownCommands);
+    const context = this.create(prelude, markUnknownCommands, packages);
     this.contexts.set(key, context);
     while (this.contexts.size > MAX_CONTEXTS) {
       const oldest = this.contexts.keys().next().value as string | undefined;
@@ -1252,8 +1291,8 @@ class ContextPool {
    * 单条定义写法 MathJax 不接受时，不能让整份自定义定义作废：整体转换失败后
    * 换一个干净上下文逐条重试，只丢掉真正无法转换的那几行。
    */
-  private create(prelude: string, markUnknownCommands: boolean): RenderContext {
-    const context = createRenderContext(markUnknownCommands);
+  private create(prelude: string, markUnknownCommands: boolean, packages: readonly string[]): RenderContext {
+    const context = createRenderContext(markUnknownCommands, packages);
     applyPrelude(context, COMPATIBILITY_PRELUDE);
     const user = prelude.trim();
     if (!user) return context;
@@ -1261,7 +1300,7 @@ class ContextPool {
       applyPrelude(context, user);
       return context;
     } catch {
-      const recovered = createRenderContext(markUnknownCommands);
+      const recovered = createRenderContext(markUnknownCommands, packages);
       applyPrelude(recovered, COMPATIBILITY_PRELUDE);
       for (const line of user.split('\n')) {
         const statement = line.trim();
@@ -1296,11 +1335,15 @@ export class MathJaxSvgRenderer {
     if (/\\begingroup(?:Sandbox|Reset)\b/.test(options.expression)) {
       throw new Error('公式使用了 Silk Math 保留的 TeX 隔离命令');
     }
+    const packages = renderPackages(options.packages ?? [], options.expression, options.definitionPrelude);
+    const fingerprint = `${options.definitionFingerprint}|${packages.join(',')}`;
     const context = this.pool.get(
-      options.definitionFingerprint,
+      fingerprint,
       options.definitionPrelude,
       options.markUnknownCommands,
+      packages,
     );
+    const siOptions = context.tex.parseOptions.packageData.get(SI_OPTIONS_KEY);
     try {
       // `\\begingroupSandbox` isolates definitions by treating the next TeX atom as
       // the complete sandbox.  Passing the expression without braces therefore
@@ -1343,12 +1386,19 @@ export class MathJaxSvgRenderer {
       return { svg: withPixelSize(svg, widthPx, heightPx), widthPx, heightPx };
     } catch (error) {
       // MathJax 的失败转换可能留下未闭合 parser/group 状态；下一帧必须从干净上下文恢复。
-      this.pool.evict(options.definitionFingerprint, options.markUnknownCommands, context);
+      this.pool.evict(fingerprint, options.markUnknownCommands, context);
       throw error;
+    } finally {
+      // 公式内临时设置不能泄漏到下一条公式或另一个文档。
+      context.tex.parseOptions.packageData.set(SI_OPTIONS_KEY, siOptions);
+      context.tex.parseOptions.packageData.delete(SI_CELLS_KEY);
+      context.tex.releaseFrame();
+      SHARED_OUTPUT.releaseFrame();
     }
   }
 
   clear(): void {
     this.pool.clear();
+    clearSiCaches();
   }
 }

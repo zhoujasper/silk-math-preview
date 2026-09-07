@@ -1,3 +1,4 @@
+import { WeightedLru } from '../core/weightedLru';
 import { createHash } from 'node:crypto';
 
 import * as vscode from 'vscode';
@@ -22,6 +23,7 @@ export interface DefinitionSnapshot {
   readonly definitionPrelude: string;
   /** 命令名保留前导反斜杠。 */
   readonly commands: readonly string[];
+  readonly packages: readonly string[];
   readonly environments: readonly string[];
   readonly limitations: readonly string[];
   readonly commandDefinitions: readonly ParsedDefinition[];
@@ -38,6 +40,8 @@ type ParsedSource = ParsedTexSource;
 
 interface CachedDocumentSource {
   readonly version: number;
+  readonly semanticVersion: number;
+  readonly weight: number;
   readonly parsed: ParsedSource;
 }
 
@@ -47,6 +51,8 @@ interface CachedSnapshot {
 }
 
 interface LoadedFile {
+  readonly text?: string;
+  readonly weight?: number;
   readonly parsed?: ParsedSource;
   readonly limitation?: string;
 }
@@ -54,13 +60,18 @@ interface LoadedFile {
 
 
 interface TraversalState {
+  readonly generation: number;
   readonly folder: vscode.WorkspaceFolder | undefined;
   readonly sourceBatches: DefinitionSourceInput[];
   readonly loaded: Set<string>;
   readonly visiting: Set<string>;
   readonly limitations: string[];
+  readonly packages: Set<string>;
+  readonly packageOptions: string[];
   loadOrder: number;
   fileCount: number;
+  target?: { key: string; offset: number };
+  reached?: boolean;
 }
 
 const DEFAULT_MAX_FILES = 128;
@@ -74,15 +85,16 @@ export class DefinitionWorkspace implements vscode.Disposable {
   private readonly maxFiles: number;
   private readonly maxFileBytes: number;
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly documentSources = new Map<string, CachedDocumentSource>();
-  private readonly fileSources = new Map<string, Promise<LoadedFile>>();
-  private readonly resolutions = new Map<string, Promise<vscode.Uri | undefined>>();
-  private readonly snapshots = new Map<string, CachedSnapshot>();
+  private readonly documentSources = new WeightedLru<CachedDocumentSource>(12, 16 * 1024 * 1024);
+  private readonly fileSources = new WeightedLru<Promise<LoadedFile>>(128, 16 * 1024 * 1024);
+  private readonly resolutions = new WeightedLru<Promise<vscode.Uri | undefined>>(512, 128 * 1024);
+  private readonly snapshots = new WeightedLru<CachedSnapshot>(16, 8 * 1024 * 1024);
   /** 已经解析完成的快照，供预览热路径同步取用。 */
-  private readonly resolvedSnapshots = new Map<string, DefinitionSnapshot>();
+  private readonly resolvedSnapshots = new WeightedLru<DefinitionSnapshot>(16, 8 * 1024 * 1024);
   private readonly invalidationEmitter = new vscode.EventEmitter<vscode.Uri | undefined>();
   private invalidationGeneration = 0;
   private disposed = false;
+  private tikzContext: { document: string; offset: number; version: number; generation: number; value: Promise<string> } | undefined;
 
   public readonly onDidInvalidate = this.invalidationEmitter.event;
 
@@ -96,6 +108,19 @@ export class DefinitionWorkspace implements vscode.Disposable {
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.{tex,sty,cls,md,markdown,mdx,ipynb}');
     this.disposables.push(
       watcher,
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        const cached = this.tikzContext;
+        if (!cached) return;
+        if (cached.document !== uriKey(event.document.uri) || event.contentChanges.some((change) => event.document.offsetAt(change.range.start) < cached.offset)) this.tikzContext = undefined;
+        else cached.version = event.document.version;
+      }),
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        const key = uriKey(document.uri);
+        this.documentSources.delete(key);
+        this.snapshots.delete(key);
+        this.resolvedSnapshots.delete(key);
+        this.invalidateSource(document.uri);
+      }),
       watcher.onDidChange((uri) => this.invalidateSource(uri)),
       watcher.onDidCreate((uri) => this.invalidateSource(uri, true)),
       watcher.onDidDelete((uri) => this.invalidateSource(uri, true)),
@@ -111,19 +136,92 @@ export class DefinitionWorkspace implements vscode.Disposable {
         if (this.disposed || !isSupportedDocument(event.document) || isIgnoredUri(event.document.uri)) return;
         this.fileSources.delete(uriKey(event.document.uri));
         const active = vscode.window.activeTextEditor?.document.uri;
-        if (active && uriKey(active) === uriKey(event.document.uri) && !texDocumentEditsAffectDefinitions(
-          event.document.getText(),
-          event.contentChanges.map((change) => ({
-            start: event.document.offsetAt(change.range.start),
-            inserted: change.text,
-            deleted: change.rangeLength ?? 0,
-          })),
-        )) {
+        const changes = event.contentChanges.map((change) => ({
+          start: event.document.offsetAt(change.range.start), inserted: change.text, deleted: change.rangeLength ?? 0,
+        }));
+        const affects = changes.some((change) => {
+          const prefix = event.document.getText(new vscode.Range(
+            event.document.positionAt(Math.max(0, change.start - 128)), event.document.positionAt(change.start),
+          ));
+          return /!\s*TeX\s+root|\\(?:begin|end)\s*\{document\}/i.test(prefix + change.inserted)
+            || texDocumentEditsAffectDefinitions(prefix, [{ ...change, start: prefix.length }]);
+        });
+        if (active && uriKey(active) === uriKey(event.document.uri) && !affects) {
+          const key = uriKey(event.document.uri);
+          const cached = this.documentSources.get(key);
+          // Only reuse offsets if every edit is beyond the last declaration/dependency.
+          const boundary = cached ? Math.max(snapshotBoundary(cached.parsed, Number.POSITIVE_INFINITY),
+            cached.parsed.preambleEnd === undefined ? 0 : cached.parsed.preambleEnd + 16) : Infinity;
+          if (cached && event.document.version === cached.version + 1
+            && changes.every((change) => change.start > boundary && (!cached.parsed.rootHint || change.start >= 8192))) {
+            this.documentSources.set(key, { ...cached, version: event.document.version }, cached.weight);
+          }
           return;
         }
         this.invalidateSource(event.document.uri);
       }),
     );
+  }
+
+  /** Native TikZ context never flattens or serializes declarations through MathJax. */
+  public getTikzContext(document: vscode.TextDocument, offset: number): Promise<string> {
+    const key = uriKey(document.uri), cached = this.tikzContext;
+    if (cached?.document === key && cached.offset === offset && cached.version === document.version && cached.generation === this.invalidationGeneration) return cached.value;
+    if (offset > this.maxFileBytes) return Promise.reject(new Error('TikZ context exceeds the document size limit'));
+    const notebook = notebookContaining(document);
+    const earlier = notebook?.getCells().slice(0, notebook.getCells().findIndex((cell) => uriKey(cell.document.uri) === key))
+      .filter((cell) => cell.kind === vscode.NotebookCellKind.Markup).map((cell) => cell.document.getText()).join('\n') ?? '';
+    const prefix = earlier + '\n' + document.getText(new vscode.Range(document.positionAt(0), document.positionAt(offset)));
+    const value = (async () => {
+      const { extractTikzPreamble } = await import('./tikz-context.js');
+      const visiting = new Set<string>(), packages = new Set<string>();
+      let count = 0;
+      const walk = async (uri: vscode.Uri, raw: string): Promise<string> => {
+        const name = uriKey(uri);
+        if (visiting.has(name) || ++count > this.maxFiles) throw new Error('TikZ dependency cycle or file limit');
+        visiting.add(name);
+        try {
+          const text = extractTikzPreamble(raw, true);
+          const parsed = parseTeXSource(text, name);
+          const groups = new Map<number, ParsedDependency[]>();
+          for (const dependency of parsed.dependencies) {
+            const start = dependency.source.startOffset;
+            groups.set(start, [...(groups.get(start) ?? []), dependency]);
+          }
+          let result = '', cursor = 0;
+          for (const [start, dependencies] of groups) {
+            result += text.slice(cursor, start);
+            for (const dependency of dependencies) {
+              const target = dependency.resolution === 'literal' ? await this.resolveDependency(uri, dependency, vscode.workspace.getWorkspaceFolder(document.uri)) : undefined;
+              const loaded = target ? await this.loadFileSource(target) : undefined;
+              if (loaded?.text !== undefined && target) {
+                const fileKey = uriKey(target);
+                if (dependency.kind !== 'package' || !packages.has(fileKey)) {
+                  if (dependency.kind === 'package') packages.add(fileKey);
+                  const context = await walk(target, fileKey === key ? prefix : loaded.text);
+                  result += /\.(?:sty|cls)$/i.test(target.path) ? '\\makeatletter\n' + context + '\n\\makeatother\n' : context + '\n';
+                }
+              } else result += text.slice(start, dependency.source.endOffset) + '\n';
+            }
+            cursor = dependencies[0]!.source.endOffset;
+            if (result.length > 200_000) throw new Error('TikZ context is too large');
+          }
+          result += text.slice(cursor);
+          if (result.length > 200_000) throw new Error('TikZ context is too large');
+          return result;
+        } finally { visiting.delete(name); }
+      };
+      const root = notebook ? undefined : await this.findRootPreamble(document, this.parseDocument(document), { folder: vscode.workspace.getWorkspaceFolder(document.uri), limitations: [] });
+      let preamble = '';
+      if (root) {
+        const loaded = await this.loadFileSource(root.uri);
+        if (loaded.text !== undefined) preamble = await walk(root.uri, loaded.text.slice(0, root.parsed.preambleEnd));
+      }
+      return extractTikzPreamble(preamble + '\n' + await walk(document.uri, prefix));
+    })();
+    this.tikzContext = { document: key, offset, version: document.version, generation: this.invalidationGeneration, value };
+    void value.catch(() => { if (this.tikzContext?.value === value) this.tikzContext = undefined; });
+    return value;
   }
 
   public async getSnapshot(
@@ -144,7 +242,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
     const key = [
       this.invalidationGeneration,
       notebookContext?.notebook.version ?? 0,
-      document.version,
+      this.documentSources.get(uriKey(document.uri))?.semanticVersion ?? document.version,
       effectiveOffset,
     ].join(':');
     const cached = this.snapshots.get(documentKey);
@@ -153,9 +251,15 @@ export class DefinitionWorkspace implements vscode.Disposable {
     }
 
     const value = this.buildSnapshot(document, parsed, effectiveOffset);
-    this.snapshots.set(documentKey, { key, value });
+    this.snapshots.set(documentKey, { key, value }, 512);
     value
-      .then((resolved) => this.resolvedSnapshots.set(documentKey, resolved))
+      .then((resolved) => {
+        // An older async traversal must not replace a newer snapshot after an edit.
+        if (this.snapshots.get(documentKey)?.value !== value || this.disposed) return;
+        const weight = snapshotWeight(resolved);
+        this.snapshots.set(documentKey, { key, value }, weight);
+        this.resolvedSnapshots.set(documentKey, resolved, weight);
+      })
       .catch(() => {
         // 失败由调用方处理，这里只是不缓存。
       });
@@ -213,6 +317,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
       return;
     }
     this.disposed = true;
+    this.tikzContext = undefined;
     for (const disposable of this.disposables.splice(0)) {
       disposable.dispose();
     }
@@ -231,19 +336,64 @@ export class DefinitionWorkspace implements vscode.Disposable {
   ): Promise<DefinitionSnapshot> {
     const index = new DefinitionIndex();
     const state: TraversalState = {
+      generation: this.invalidationGeneration,
       folder: vscode.workspace.getWorkspaceFolder(document.uri),
       sourceBatches: [],
       loaded: new Set<string>(),
       visiting: new Set<string>(),
       limitations: [],
+      packages: new Set(),
+      packageOptions: [],
       loadOrder: 0,
       fileCount: 0,
     };
     const notebook = notebookContaining(document);
+    if (!notebook && /^(latex|tex)$/.test(document.languageId)) {
+      const root = await this.findRootPreamble(document, parsed, state);
+      if (root) {
+        state.target = { key: uriKey(document.uri), offset };
+        await this.visitSource(root.uri, root.parsed, state, root.parsed.preambleEnd ?? Number.POSITIVE_INFINITY, true);
+      }
+    }
     // notebook 单元格已经在 parse 时按“当前格及之前”裁过，这里不再用单元格内 offset 二次裁剪。
-    await this.visitSource(document.uri, parsed, state, notebook ? Number.POSITIVE_INFINITY : offset, true);
+    if (!state.reached) await this.visitSource(document.uri, parsed, state, notebook ? Number.POSITIVE_INFINITY : offset, true);
+    if (state.generation !== this.invalidationGeneration || this.disposed) throw new Error('定义已变化，等待下一帧更新');
     index.replaceSources(state.sourceBatches);
-    return makeSnapshot(index, state.limitations);
+    return makeSnapshot(index, state.limitations, [...state.packages], state.packageOptions);
+  }
+
+  /** Explicit root hints, or one unambiguous already-open parent; never scan all workspace TeX files. */
+  private async findRootPreamble(document: vscode.TextDocument, parsed: ParsedSource, state: Pick<TraversalState, 'folder' | 'limitations'>)
+    : Promise<{ uri: vscode.Uri; parsed: ParsedSource } | undefined> {
+    const hint = parsed.rootHint;
+    if (hint) {
+      // Literal .tex paths only. Relative parent segments are resolved before the workspace boundary check.
+      if (!/^[^\\{}%\r\n]+\.tex$/i.test(hint)) {
+        state.limitations.push('主文件指令需要字面量 .tex 路径');
+        return undefined;
+      }
+      const uri = hint.startsWith('/') ? document.uri.with({ path: hint }) : vscode.Uri.joinPath(dirnameUri(document.uri), hint);
+      if (uriKey(uri) === uriKey(document.uri) || isIgnoredUri(uri)
+        || (state.folder && !isInsideFolder(uri, state.folder))) return undefined;
+      const loaded = await this.loadFileSource(uri);
+      if (loaded.parsed) return { uri, parsed: loaded.parsed };
+      state.limitations.push(loaded.limitation ?? `主文件未找到：${hint}`);
+      return undefined;
+    }
+    const matches: Array<{ uri: vscode.Uri; parsed: ParsedSource }> = [];
+    for (const candidate of vscode.workspace.textDocuments.slice(0, 16)) {
+      if (!/^(latex|tex)$/.test(candidate.languageId) || uriKey(candidate.uri) === uriKey(document.uri)
+        || isIgnoredUri(candidate.uri)) continue;
+      const parent = this.parseDocument(candidate);
+      if (parent.preambleEnd === undefined) continue;
+      if (parent.dependencies.some((dependency) => (dependency.kind === 'input' || dependency.kind === 'include')
+        && dependency.resolution === 'literal'
+        && uriKey(vscode.Uri.joinPath(dirnameUri(candidate.uri), dependencyFileName(dependency))) === uriKey(document.uri))) {
+        matches.push({ uri: candidate.uri, parsed: parent });
+      }
+    }
+    if (matches.length > 1) state.limitations.push('多个已打开主文件引用当前章节；可用 % !TeX root = main.tex 指定');
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   private parseDocument(document: vscode.TextDocument): ParsedSource {
@@ -256,7 +406,8 @@ export class DefinitionWorkspace implements vscode.Disposable {
     const parsed = document.languageId === 'markdown' || document.languageId === 'mdx'
       ? parseMarkdownDefinitionSource(text, key)
       : parseTeXSource(text, key);
-    this.documentSources.set(key, { version: document.version, parsed });
+    const weight = text.length * 2 + parsed.definitions.length * 512 + parsed.dependencies.length * 256;
+    this.documentSources.set(key, { version: document.version, semanticVersion: document.version, parsed, weight }, weight);
     return parsed;
   }
 
@@ -268,6 +419,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
     root = false,
   ): Promise<void> {
     const key = uriKey(uri);
+    if (state.target?.key === key) endOffset = state.target.offset;
     if (state.visiting.has(key)) {
       state.limitations.push(`检测到循环依赖，已停止重复加载：${displayUri(uri)}`);
       return;
@@ -306,22 +458,33 @@ export class DefinitionWorkspace implements vscode.Disposable {
         return left.kind === 'dependency' ? -1 : 1;
       });
 
+      let batch: ParsedDefinition[] = [];
+      const flush = (): void => {
+        if (!batch.length) return;
+        state.sourceBatches.push({ sourceId: `${key}#defs:${state.loadOrder}`, definitions: batch, loadOrder: state.loadOrder++ });
+        batch = [];
+      };
       for (const entry of timeline) {
+        if (state.generation !== this.invalidationGeneration || this.disposed) throw new Error('定义已变化，等待下一帧更新');
+        if (state.reached) break;
         if (entry.kind === 'definition') {
-          state.sourceBatches.push({
-            sourceId: `${key}#defs:${entry.value.source.startOffset}:${state.loadOrder}`,
-            definitions: [entry.value],
-            loadOrder: state.loadOrder,
-          });
-          state.loadOrder += 1;
+          batch.push(entry.value);
           continue;
         }
+        flush();
         const dependency = entry.value;
         if (dependency.resolution !== 'literal') {
           state.limitations.push(
             `动态依赖无法安全解析：${dependency.name}（${displayUri(uri)}）`,
           );
           continue;
+        }
+        if (dependency.kind === 'package') {
+          const packageName = dependency.name.replace(/\.sty$/i, '').split('/').pop() ?? dependency.name;
+          state.packages.add(packageName);
+          if (packageName === 'siunitx' && dependency.options.length > 0) {
+            state.packageOptions.push(`\\sisetup{${dependency.options.join(',')}}`);
+          }
         }
         const target = await this.resolveDependency(uri, dependency, state.folder);
         if (!target) {
@@ -339,8 +502,10 @@ export class DefinitionWorkspace implements vscode.Disposable {
           await this.visitSource(target, loaded.parsed, state, Number.POSITIVE_INFINITY);
         }
       }
+      flush();
     } finally {
       state.visiting.delete(key);
+      if (state.target?.key === key) state.reached = true;
     }
   }
 
@@ -349,18 +514,25 @@ export class DefinitionWorkspace implements vscode.Disposable {
     const cached = this.fileSources.get(key);
     if (cached) return cached;
     const value = this.readAndParseFile(uri);
-    this.fileSources.set(key, value);
+    this.fileSources.set(key, value, 512);
+    void value.then((loaded) => {
+      if (this.fileSources.get(key) === value && !this.disposed) this.fileSources.set(key, value, loaded.weight ?? 512);
+    });
     return value;
   }
 
   private async readAndParseFile(uri: vscode.Uri): Promise<LoadedFile> {
     try {
       const open = findOpenDocument(uri);
+      if (!open && (await vscode.workspace.fs.stat(uri)).size > this.maxFileBytes) {
+        return { limitation: `过大未加载：${displayUri(uri)}` };
+      }
       const text = open?.getText() ?? new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
       if (Buffer.byteLength(text, 'utf8') > this.maxFileBytes) {
         return { limitation: `过大未加载：${displayUri(uri)}` };
       }
-      return { parsed: parseTeXSource(text, uriKey(uri)) };
+      const parsed = parseTeXSource(text, uriKey(uri));
+      return { parsed, text, weight: text.length * 2 + parsed.definitions.length * 512 + parsed.dependencies.length * 256 };
     } catch {
       return {};
     }
@@ -380,7 +552,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
       return cached;
     }
     const value = this.findDependency(source, dependency, folder);
-    this.resolutions.set(cacheKey, value);
+    this.resolutions.set(cacheKey, value, cacheKey.length * 2 + 256);
     return value;
   }
 
@@ -396,12 +568,6 @@ export class DefinitionWorkspace implements vscode.Disposable {
   ): Promise<vscode.Uri | undefined> {
     const relativeName = dependencyFileName(dependency);
     const documentFolder = dirnameUri(source);
-    for (const document of vscode.workspace.textDocuments) {
-      if (isIgnoredUri(document.uri) || !uriPathMatchesDependency(document.uri.path, relativeName)) continue;
-      if (isInsideUri(document.uri, documentFolder) || (folder !== undefined && isInsideFolder(document.uri, folder))) {
-        return document.uri;
-      }
-    }
     const candidates = uniqueUris([
       vscode.Uri.joinPath(documentFolder, relativeName),
       ...(folder ? [vscode.Uri.joinPath(folder.uri, relativeName)] : []),
@@ -409,8 +575,15 @@ export class DefinitionWorkspace implements vscode.Disposable {
     for (const candidate of candidates) {
       const reachable = isInsideUri(candidate, documentFolder)
         || (folder !== undefined && isInsideFolder(candidate, folder));
-      if (reachable && !isIgnoredUri(candidate) && await isFile(candidate)) {
+      if (reachable && !isIgnoredUri(candidate) && (findOpenDocument(candidate) || await isFile(candidate))) {
         return candidate;
+      }
+    }
+
+    for (const document of vscode.workspace.textDocuments) {
+      if (isIgnoredUri(document.uri) || !uriPathMatchesDependency(document.uri.path, relativeName)) continue;
+      if (isInsideUri(document.uri, documentFolder) || (folder !== undefined && isInsideFolder(document.uri, folder))) {
+        return document.uri;
       }
     }
 
@@ -423,7 +596,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
       2,
     );
     return matches
-      .filter((uri) => isInsideFolder(uri, folder) && !isIgnoredUri(uri))
+      .filter((uri) => isInsideFolder(uri, folder) && !isIgnoredUri(uri) && uriPathMatchesDependency(uri.path, relativeName))
       .sort((left, right) => left.path.localeCompare(right.path))[0];
   }
 }
@@ -446,18 +619,21 @@ function documentLength(document: vscode.TextDocument): number {
 function makeSnapshot(
   index: DefinitionIndex,
   traversalLimitations: readonly string[],
+  packages: readonly string[],
+  packageOptions: readonly string[],
 ): DefinitionSnapshot {
   const commandDefinitions = index.listCommands().map((entry) => entry.definition);
   const environmentDefinitions = index.listEnvironments().map((entry) => entry.definition);
   // 颜色排在最前：`\colorlet` 和后面的宏都可能引用它们。
   const colorDefinitions = index.listColors().map((entry) => entry.definition);
-  const allDefinitions = [...colorDefinitions, ...commandDefinitions, ...environmentDefinitions];
-  const recognizedLimited = allDefinitions.filter((definition) =>
-    definition.expandability === 'recognized-limited' || serializeDefinition(definition) === undefined,
+  const configurations = index.listConfigurations().map((entry) => entry.definition);
+  const allDefinitions = [...colorDefinitions, ...commandDefinitions, ...environmentDefinitions, ...configurations];
+  const serialized = allDefinitions.map(serializeDefinition);
+  const recognizedLimited = allDefinitions.filter((definition, index) =>
+    definition.expandability === 'recognized-limited' || serialized[index] === undefined,
   );
-  const prelude = allDefinitions
-    .map(serializeDefinition)
-    .filter((value): value is string => value !== undefined)
+  const prelude = [...packageOptions, ...serialized
+    .filter((value): value is string => value !== undefined)]
     .join('\n');
   const commands = commandDefinitions.map((definition) => definition.name);
   // 只有真正进入数学模式的自定义环境才能当公式区域：把 `question`/`solution`
@@ -474,12 +650,13 @@ function makeSnapshot(
       return `${definition.kind === 'command' ? definition.name : definition.name}: ${detail}`;
     }),
   ]);
-  const fingerprintPayload = JSON.stringify({ prelude, commands, environments, limitations });
+  const fingerprintPayload = JSON.stringify({ prelude, commands, environments, limitations, packages });
   const fingerprint = createHash('sha256').update(fingerprintPayload).digest('hex').slice(0, 16);
   return {
     fingerprint,
     prelude,
     definitionPrelude: prelude,
+    packages,
     commands,
     environments,
     limitations,
@@ -493,6 +670,10 @@ function serializeDefinition(definition: ParsedDefinition): string | undefined {
   if (definition.expandability !== 'expandable') {
     return undefined;
   }
+  if (definition.declaration === 'declare-paired-delimiter') {
+    return `\\DeclarePairedDelimiter{${definition.name}}{${definition.beginReplacement}}{${definition.endReplacement}}`;
+  }
+  if (definition.kind === 'configuration') return `\\sisetup{${definition.replacement ?? ''}}`;
   if (definition.kind === 'color') {
     // 解析阶段已折算成 MathJax 认识的模型；这里只做拼装。
     const [model, value] = splitOnce(definition.replacement ?? '', ':');
@@ -534,6 +715,7 @@ function emptySnapshot(): DefinitionSnapshot {
     fingerprint: EMPTY_FINGERPRINT,
     prelude: '',
     definitionPrelude: '',
+    packages: [],
     commands: [],
     environments: [],
     limitations: [],
@@ -666,4 +848,9 @@ function parseNotebookCells(
     text: cell.document.getText(),
   }));
   return parseNotebookDefinitionSources(sources, currentIndex < 0 ? 0 : currentIndex, currentEndOffset);
+}
+
+function snapshotWeight(snapshot: DefinitionSnapshot): number {
+  return snapshot.prelude.length * 4 + (snapshot.commandDefinitions.length + snapshot.environmentDefinitions.length) * 512
+    + snapshot.limitations.join('').length * 2 + 1024;
 }

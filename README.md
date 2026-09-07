@@ -46,11 +46,14 @@ A Visual Studio Code extension for live LaTeX math preview. Open a <code>.tex</c
 
 Works with inline <code>$...$</code> and <code>\(...\)</code>, display <code>\[...\]</code>, <code>equation</code>, <code>align</code>, <code>tabular</code>, GitHub-flavored Markdown tables, and your own macros from <code>.sty</code> / <code>.cls</code>. Undefined commands appear in red; the rest of the formula still renders.
 
+Package declarations and local dependencies are detected automatically. Numbers and units such as <code>\num</code>, <code>\SI</code>, and <code>\qty</code>, plus text-safe custom macros, now work inside table cells too. See [supported macros and limits](docs/MACRO_SUPPORT.md).
+
 Install from the Marketplace by searching <strong>Silk Math Preview</strong>, or open <a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">the listing</a>.
 
 - **Toggle** <code>Ctrl+Alt+M</code> (Mac: <code>Cmd+Alt+M</code>). <code>Esc</code> dismisses the overlay.
 - **Settings** click <strong>Silk Math</strong> in the status bar.
-- **OCR** screenshot math or text with the camera icon. Models download on first use and stay on your machine.
+- **TikZ / pgfplots** enable **TikZ / pgfplots live preview** in that menu (`silkMath.tikz.enabled`, off by default), then put the caret in a `tikzpicture`. Unsaved edits update the SVG image. First use downloads a verified local WebAssembly renderer once; no LaTeX installation is needed. Includes pgfplots 1.18.3, `compat=1.18`, grouped plots, plot libraries and native macros; see [TikZ support and examples](docs/TIKZ.md).
+- **OCR** click the capture icon and drag a screen region; recognition starts when you release. No OCR tab opens. Copy, insert, or edit the result in a compact menu. Use **Silk Math → Recognize image…** to paste or choose a PNG / JPEG; Ctrl+V / ⌘V also recognizes image clipboard data in LaTeX and Markdown editors. Models download once and run locally.
 
 <p align="center"><a href="#languages">Languages</a></p>
 
@@ -60,11 +63,15 @@ Install from the Marketplace by searching <strong>Silk Math Preview</strong>, or
 
 行内 <code>$...$</code> / <code>\(...\)</code>、独立 <code>\[...\]</code>、<code>equation</code>、<code>align</code>、<code>tabular</code>、GitHub 风格 Markdown 表，以及 <code>.sty</code> / <code>.cls</code> 里自己的宏都会显示。未定义的命令标成红色，其余部分照常渲染。
 
+自动分析宏包声明和本地依赖，<code>\num</code>、<code>\SI</code>、<code>\qty</code> 以及可用于文本的自定义宏也能在表格单元格里展开。详见[宏支持范围与限制](docs/MACRO_SUPPORT.md)。
+
 在扩展市场搜索 <strong>Silk Math Preview</strong> 即可安装，或打开<a href="https://marketplace.visualstudio.com/items?itemName=silkmath.silk-math-preview">商店页</a>。
 
 - **开关预览** <code>Ctrl+Alt+M</code>（Mac：<code>Cmd+Alt+M</code>），关掉当前浮层按 <code>Esc</code>
 - **设置** 点状态栏的 <strong>Silk Math</strong>
-- **截图识别** 点状态栏的相机图标。模型首次使用才下载，只在本机运行
+- **TikZ / pgfplots 图片预览** 在菜单中勾选 **TikZ / pgfplots 实时预览**（`silkMath.tikz.enabled`，默认不勾选），把光标放进 `tikzpicture`，不保存也会随编辑更新图片。附带 pgfplots 1.18.3，支持 `compat=1.18`、分组图、绘图库和原生宏定义。首次使用下载校验过的本地 WebAssembly 组件，之后离线运行，无需安装 LaTeX；[使用说明和例子](docs/TIKZ.md)。
+- **截图识别** 点状态栏截图图标，直接框选屏幕，松开后自动识别，不再打开大面板。顶部小菜单可复制、插入或编辑结果。**Silk Math → 识别图片…** 支持粘贴和选择 PNG / JPEG；也可在 LaTeX、Markdown 编辑器中 Ctrl+V / ⌘V 粘贴图片识别。模型首次下载后只在本机运行。
+- **快捷键** Ctrl+Alt+O（Mac：⌘⌥O）打开识别菜单，在菜单内 Ctrl+V / ⌘V 粘贴图片；Ctrl+Alt+V（Mac：⌘⌥V）直接读取剪贴板。旧版 VS Code 没有图片粘贴 API 时，使用识别菜单或直接粘贴命令。测试版的快捷键额外按 Shift；自动图片粘贴默认关闭，可在 `silkMathTest.ocr.pasteImages` 开启。
 
 <p align="center"><a href="#languages">语言</a></p>
 

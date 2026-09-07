@@ -45,6 +45,13 @@ export class WeightedLru<Value> {
     }
   }
 
+  delete(key: string): boolean {
+    const entry = this.entries.get(key);
+    if (!entry) return false;
+    this.weight -= entry.weight;
+    return this.entries.delete(key);
+  }
+
   clear(): void {
     this.entries.clear();
     this.weight = 0;

@@ -2,7 +2,7 @@
   "name": "silk-math-preview",
   "displayName": "Silk Math Preview",
   "description": "Live math preview that follows your caret. Inline LaTeX, Markdown, Jupyter, and MathJax equations with no compile step. 光标走到哪，公式就在哪渲染。",
-  "version": "0.1.76",
+  "version": "0.2.1",
   "publisher": "silkmath",
   "author": {
     "name": "Jasper Zhou",
@@ -165,6 +165,22 @@
       {
         "command": "silkMath.diagnoseFormula",
         "title": "Silk Math: 诊断当前公式 / Diagnose Formula at Caret"
+      },
+      {
+        "command": "silkMath.ocr.open",
+        "title": "Silk Math: 识别图片 / Recognize Image"
+      },
+      {
+        "command": "silkMath.ocr.paste",
+        "title": "Silk Math: 粘贴图片识别 LaTeX / Recognize Clipboard Image"
+      },
+      {
+        "command": "silkMath.ocr.openImage",
+        "title": "Silk Math: 选择图片识别 LaTeX / Recognize Image File"
+      },
+      {
+        "command": "silkMath.toggleTikz",
+        "title": "Silk Math: 切换 TikZ 图片预览 / Toggle TikZ Preview"
       }
     ],
     "keybindings": [
@@ -183,6 +199,23 @@
         "command": "silkMath.dismissFlyout",
         "key": "escape",
         "when": "silkMath.flyoutVisible"
+      },
+      {
+        "command": "silkMath.ocr.open",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o"
+      },
+      {
+        "command": "silkMath.ocr.paste",
+        "key": "ctrl+v",
+        "mac": "cmd+v",
+        "when": "silkMath.ocrInputVisible && inQuickOpen"
+      },
+      {
+        "command": "silkMath.ocr.paste",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
@@ -291,6 +324,16 @@
           "type": "boolean",
           "default": true,
           "description": "在状态栏菜单中显示按需安装的本地截图公式/文字识别入口。Show the on-demand local screenshot OCR entry in the Silk Math status menu."
+        },
+        "silkMath.ocr.pasteImages": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 LaTeX / Markdown 编辑器中将粘贴的图片识别为 LaTeX。Recognize pasted images as LaTeX in LaTeX and Markdown editors."
+        },
+        "silkMath.tikz.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用 TikZ / pgfplots 实时图片预览。默认关闭；首次使用下载本地 WebAssembly 渲染组件，之后离线运行，无需安装 LaTeX。Enable live TikZ / pgfplots image preview. Off by default; downloads the local WebAssembly renderer once, then works offline without a LaTeX installation."
         }
       }
     }
@@ -309,19 +352,26 @@
     "package:release": "node scripts/package-channel.mjs release",
     "package:test": "node scripts/package-channel.mjs test",
     "package:all": "npm run package:release && npm run package:test",
-    "package": "npm run verify && npm run package:all && npm run check:size"
+    "package": "npm run verify && npm run package:all && npm run check:size",
+    "validate:tikz": "node scripts/validate-tikz.mjs",
+    "benchmark:tikz": "node scripts/benchmark-tikz.mjs",
+    "stress:tikz": "node scripts/stress-tikz.mjs"
   },
   "devDependencies": {
     "@mathjax/mathjax-tex-font": "4.1.3",
     "@mathjax/src": "4.1.3",
     "@types/node": "^22.0.0",
+    "@types/opentype.js": "1.3.8",
     "@types/vscode": "^1.85.0",
     "@vitest/coverage-v8": "^4.0.0",
     "@vscode/vsce": "^3.9.2",
     "@xmldom/xmldom": "^0.9.11",
     "esbuild": "^0.28.2",
+    "node-tikzjax": "1.0.5",
     "onnxruntime-web": "1.26.0",
+    "opentype.js": "1.3.4",
     "ppu-paddle-ocr": "5.8.3",
+    "pureimage": "0.4.20",
     "typescript": "^5.9.0",
     "vitest": "^4.0.0"
   }

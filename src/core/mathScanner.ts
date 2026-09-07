@@ -1,6 +1,7 @@
 import { DEFAULT_MATH_ENVIRONMENTS } from './completionCatalog';
 import { collectMarkdownTableRegions } from './markdownTable';
 import { TABLE_ENVIRONMENTS } from './tablePreview';
+import { TIKZ_ENVIRONMENTS } from '../tikz/source';
 import type {
   MathRecoveryReason,
   MarkdownFenceState,
@@ -631,6 +632,7 @@ export function scanMathRegions(
   const environments = new Set<string>([
     ...DEFAULT_MATH_ENVIRONMENTS,
     ...TABLE_ENVIRONMENTS,
+    ...TIKZ_ENVIRONMENTS,
     ...customEnvironments,
   ]);
   const recoveryWindow = Math.max(

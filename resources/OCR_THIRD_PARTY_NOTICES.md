@@ -1,12 +1,16 @@
 # Optional OCR component notices
 
 The model/runtime pack is downloaded only after explicit user confirmation and runs locally.
-The Webview integration includes code from the MIT components identified below.
+The background Worker includes code from the MIT components identified below.
 
 - ONNX Runtime Web 1.26.0, copyright Microsoft Corporation, MIT.
 - ppu-paddle-ocr 5.8.3 and its bundled Web/canvas helper, copyright 2025
   PT. Perkasa Pilar Utama, MIT.
 - Formula inference logic adapted from OCR Buddy, copyright 2026 OCR Buddy contributors, MIT.
+- PureImage 0.4.20, copyright 2014 Josh Marinacci, MIT (pure JavaScript canvas and PNG/JPEG decoding).
+- pngjs 7.0.0, copyright 2015 Luke Page & Original Contributors; derived work copyright 2012 Kuba Niegowski, MIT.
+- jpeg-js 0.4.4, copyright 2014 Eugene Ware and contributors, BSD-3-Clause.
+- OpenType.js 0.4.11, copyright 2015 Frederik De Bleser, MIT.
 - pix2text-mfr quantized model exports by Brian314 and the respective model authors, MIT.
 - PP-OCRv5 model files and dictionary from PaddlePaddle/PaddleOCR, Apache-2.0.
 
@@ -32,3 +36,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## jpeg-js BSD-3-Clause License
+
+Copyright (c) 2014, Eugene Ware
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of Eugene Ware nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY EUGENE WARE ''AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL EUGENE WARE BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

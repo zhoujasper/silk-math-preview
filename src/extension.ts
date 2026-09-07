@@ -6,6 +6,7 @@ import { registerLanguageFeatures } from './vscode/languageFeatures';
 import { OcrController } from './vscode/ocrController';
 import { PreviewController } from './vscode/previewController';
 import { StatusController } from './vscode/statusController';
+import { TikzService } from './vscode/tikzService';
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel(PRODUCT_NAME);
@@ -16,8 +17,9 @@ export function activate(context: vscode.ExtensionContext): void {
     context.asAbsolutePath('dist/render-worker.js'),
     status,
     output,
+    new TikzService(context),
   );
-  const ocr = new OcrController(context, preview);
+  const ocr = new OcrController(context);
 
   context.subscriptions.push(
     output,

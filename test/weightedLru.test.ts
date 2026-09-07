@@ -24,6 +24,9 @@ describe('WeightedLru', () => {
     expect(cache.totalWeight).toBe(3);
     cache.set('huge', 'X', 11);
     expect(cache.get('huge')).toBeUndefined();
+    expect(cache.delete('b')).toBe(true);
+    expect(cache.delete('missing')).toBe(false);
+    expect(cache.totalWeight).toBe(0);
     cache.clear();
     expect(cache.totalWeight).toBe(0);
   });

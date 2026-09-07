@@ -10,6 +10,7 @@ scripts/**
 src/**
 test/**
 node_modules/**
+dist/ocr-webview.js
 **/*.onnx
 **/*.wasm
 *.vsix
@@ -22,3 +23,5 @@ project_memory.md
 AGENTS.md
 media/*.svg
 media/preview-*.png
+
+.tmp-tikz-smoke/**

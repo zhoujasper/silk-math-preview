@@ -5,6 +5,7 @@ export interface RenderRequest {
   readonly displayMode: boolean;
   readonly definitionFingerprint: string;
   readonly definitionPrelude: string;
+  readonly packages?: readonly string[];
   readonly foreground: string;
   readonly caretColor: string;
   readonly scale: number;

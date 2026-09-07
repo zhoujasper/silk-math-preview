@@ -40,6 +40,7 @@ export class DefinitionIndex {
   private readonly commands = new Map<string, IndexedDefinition>();
   private readonly environments = new Map<string, IndexedDefinition>();
   private readonly colors = new Map<string, IndexedDefinition>();
+  private readonly configurations = new Map<string, IndexedDefinition>();
   private events: readonly DefinitionIndexEvent[] = [];
   private nextSourceOrder = 0;
   private nextInsertionOrder = 0;
@@ -104,6 +105,8 @@ export class DefinitionIndex {
     this.sources.clear();
     this.commands.clear();
     this.environments.clear();
+    this.colors.clear();
+    this.configurations.clear();
     this.events = [];
     this.currentGeneration += 1;
   }
@@ -137,6 +140,10 @@ export class DefinitionIndex {
     return [...this.colors.values()].sort(compareAppliedOrder);
   }
 
+  public listConfigurations(): readonly IndexedDefinition[] {
+    return [...this.configurations.values()].sort(compareAppliedOrder);
+  }
+
   public getEvents(): readonly DefinitionIndexEvent[] {
     return this.events;
   }
@@ -151,6 +158,7 @@ export class DefinitionIndex {
     this.commands.clear();
     this.environments.clear();
     this.colors.clear();
+    this.configurations.clear();
     const events: DefinitionIndexEvent[] = [];
     let appliedOrder = 0;
 
@@ -159,7 +167,8 @@ export class DefinitionIndex {
       for (const definition of batch.definitions) {
         const target = definition.kind === 'command'
           ? this.commands
-          : definition.kind === 'color' ? this.colors : this.environments;
+          : definition.kind === 'color' ? this.colors
+            : definition.kind === 'configuration' ? this.configurations : this.environments;
         const key = definition.kind === 'command' ? normalizeCommandName(definition.name) : definition.name;
         const previous = target.get(key);
         const outcome = decideOutcome(definition, previous);

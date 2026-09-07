@@ -6,6 +6,8 @@ import { parseDependencies } from './dependencyParser.js';
 export interface ParsedTexSource {
   readonly definitions: readonly ParsedDefinition[];
   readonly dependencies: readonly ParsedDependency[];
+  readonly rootHint?: string;
+  readonly preambleEnd?: number;
 }
 
 export type DefinitionRefreshUrgency = 'idle' | 'soon' | 'now';
@@ -14,18 +16,23 @@ export type DefinitionRefreshUrgency = 'idle' | 'soon' | 'now';
  * 插入文本或光标附近出现这些声明时，定义快照必须马上重算。
  * `\def` 放在 `\definecolor` 之后，避免把颜色声明误切成 `\def`。
  */
-const DEFINITION_EDIT_RE = /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareMathOperator|DeclareMathAlphabet|definecolor|providecolor|colorlet|usepackage|RequirePackage|documentclass|input|include|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand|NewDocumentEnvironment|RenewDocumentEnvironment|ProvideDocumentEnvironment|DeclareDocumentEnvironment|def)\b/;
+const DEFINITION_EDIT_RE = /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareMathOperator|DeclareMathAlphabet|definecolor|providecolor|colorlet|usepackage|RequirePackage|documentclass|input|include|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand|NewDocumentEnvironment|RenewDocumentEnvironment|ProvideDocumentEnvironment|DeclareDocumentEnvironment|DeclareRobustCommand|DeclareSIUnit|DeclarePairedDelimiter|sisetup|gdef|def)\b/;
 
 export function parseTeXSource(text: string, sourceId = '<memory>'): ParsedTexSource {
   const masked = maskTeXComments(text);
   const definitions = parseDefinitions(text, sourceId, masked);
-  const dependencies = parseDependencies(text, sourceId, masked).filter((dependency) =>
-    !definitions.some((definition) =>
-      dependency.source.startOffset >= definition.source.startOffset &&
-      dependency.source.startOffset < definition.source.endOffset,
-    ),
-  );
-  return { definitions, dependencies };
+  // Both parsers emit source order. A moving cursor avoids D × M comparisons.
+  let definitionIndex = 0;
+  const dependencies = parseDependencies(text, sourceId, masked).filter((dependency) => {
+    const start = dependency.source.startOffset;
+    while (definitionIndex < definitions.length && definitions[definitionIndex]!.source.endOffset <= start) definitionIndex++;
+    const definition = definitions[definitionIndex];
+    return !definition || start < definition.source.startOffset;
+  });
+  const hint = /^\s*%\s*!\s*TeX\s+root\s*=\s*([^\r\n]+)/im.exec(text.slice(0, 8192))?.[1]?.trim();
+  const preambleEnd = /\\begin\s*\{document\}/.exec(masked)?.index;
+  return { definitions, dependencies, ...(hint ? { rootHint: hint.replace(/^"|"$/g, '') } : {}),
+    ...(preambleEnd !== undefined ? { preambleEnd } : {}) };
 }
 
 /** 用户刚写的声明/宏包会改变后续公式，必须立刻刷新；公式内部打字可以再等一拍。 */

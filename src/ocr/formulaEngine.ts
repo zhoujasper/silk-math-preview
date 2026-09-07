@@ -190,7 +190,6 @@ function disposeTensorMap(tensors: Readonly<Record<string, ort.Tensor>>): void {
 export class FormulaEngine {
   private sessionsPromise: Promise<readonly [ort.InferenceSession, ort.InferenceSession]> | undefined;
   private tokenizerPromise: Promise<PreparedTokenizer> | undefined;
-  private wasmFallback = false;
 
   public constructor(
     private readonly assets: FormulaAssetUrls,
@@ -226,26 +225,19 @@ export class FormulaEngine {
     ]);
     this.onProgress?.({ stage: 'models', completed: 1, total: 2 });
 
-    const createSession = async (bytes: ArrayBuffer): Promise<ort.InferenceSession> => {
-      try {
-        return await ort.InferenceSession.create(bytes, {
-          executionProviders: ['webgpu', 'wasm'],
-          graphOptimizationLevel: 'all',
-          logSeverityLevel: 3,
-        });
-      } catch {
-        this.wasmFallback = true;
-        return ort.InferenceSession.create(bytes, {
-          executionProviders: ['wasm'],
-          graphOptimizationLevel: 'all',
-          logSeverityLevel: 3,
-        });
-      }
+    // 后台 Worker 固定使用 WASM，避免 WebGPU/WASM 交叉初始化污染全局状态。
+    const options: ort.InferenceSession.SessionOptions = {
+      executionProviders: ['wasm'], graphOptimizationLevel: 'all', logSeverityLevel: 3,
     };
-
-    const sessions = await Promise.all([createSession(encoderBytes), createSession(decoderBytes)]);
-    this.onProgress?.({ stage: 'models', completed: 2, total: 2 });
-    return sessions;
+    const encoder = await ort.InferenceSession.create(encoderBytes, options);
+    try {
+      const decoder = await ort.InferenceSession.create(decoderBytes, options);
+      this.onProgress?.({ stage: 'models', completed: 2, total: 2 });
+      return [encoder, decoder];
+    } catch (error) {
+      await encoder.release().catch(() => undefined);
+      throw error;
+    }
   }
 
   public async recognize(source: CanvasImageSource): Promise<FormulaRecognitionResult> {
@@ -319,7 +311,7 @@ export class FormulaEngine {
       if (ids.length >= MAX_TOKENS) degenerate = true;
       const latex = decodeFormulaTokenIds(tokenizer, ids.slice(1));
       this.onProgress?.({ stage: 'decoding', completed: MAX_TOKENS, total: MAX_TOKENS });
-      return { latex, ok: !degenerate && latex.length > 0, usedWasmFallback: this.wasmFallback };
+      return { latex, ok: !degenerate && latex.length > 0, usedWasmFallback: false };
     } finally {
       disposeTensorMap(encoderOutput);
     }

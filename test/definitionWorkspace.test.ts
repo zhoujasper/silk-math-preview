@@ -4,6 +4,8 @@ const state = vi.hoisted(() => ({
   files: new Map<string, string>(),
   openDocuments: [] as Array<{ uri: { path: string; toString(): string }; languageId: string; version: number; getText(): string }>,
   readCount: 0,
+  activeDocument: undefined as vscode.TextDocument | undefined,
+  changeListeners: [] as Array<(event: vscode.TextDocumentChangeEvent) => void>,
 }));
 
 vi.mock('vscode', () => {
@@ -65,13 +67,19 @@ vi.mock('vscode', () => {
     FileType: { File: 1 },
     NotebookCellKind: { Markup: 1, Code: 2 },
     window: {
-      activeTextEditor: undefined,
+      get activeTextEditor() { return state.activeDocument ? { document: state.activeDocument } : undefined; },
+    },
+    Range: class {
+      constructor(public start: vscode.Position, public end: vscode.Position) {}
     },
     workspace: {
       createFileSystemWatcher: () => watcher,
       onDidSaveTextDocument: noEvent,
       onDidChangeNotebookDocument: noEvent,
-      onDidChangeTextDocument: noEvent,
+      onDidChangeTextDocument: (listener: (event: vscode.TextDocumentChangeEvent) => void) => {
+        state.changeListeners.push(listener);
+        return { dispose: () => { state.changeListeners = state.changeListeners.filter((item) => item !== listener); } };
+      },
       onDidCloseTextDocument: noEvent,
       notebookDocuments: [],
       get textDocuments() {
@@ -126,12 +134,205 @@ vi.mock('vscode', () => {
 import * as vscode from 'vscode';
 
 import { DefinitionWorkspace } from '../src/vscode/definitionWorkspace.js';
+import { MathJaxSvgRenderer } from '../src/render/mathjaxRenderer.js';
 
 describe('DefinitionWorkspace', () => {
   beforeEach(() => {
     state.files.clear();
     state.openDocuments = [];
     state.readCount = 0;
+    state.activeDocument = undefined;
+    state.changeListeners = [];
+  });
+
+  it('TikZ 保留原生定义的顺序、作用域、定界参数，且不包含图形后面的重定义', async () => {
+    const prefix = String.raw`\def\radius{1}\edef\saved{\radius}\def\radius{2}
+{\def\radius{9}}\def\pair#1,#2;{(#1,#2)}`;
+    const source = prefix + String.raw`\begin{tikzpicture}\draw(0,0)--(\radius,1);\end{tikzpicture}\def\radius{7}`;
+    const document = makeDocument('/ws/main.tex', 'latex', source);
+    const workspace = new DefinitionWorkspace();
+    try {
+      const context = await workspace.getTikzContext(document, prefix.length);
+      expect(context).toContain(String.raw`\edef\saved{\radius}`);
+      expect(context).toContain(String.raw`\def\pair#1,#2;{(#1,#2)}`);
+      expect(context.indexOf('\\edef')).toBeLessThan(context.indexOf(String.raw`\def\radius{2}`));
+      expect(context).toContain('\\begingroup');
+      expect(context).not.toContain(String.raw`\def\radius{7}`);
+    } finally { workspace.dispose(); }
+  });
+
+  it('TikZ 从未保存 sty 递归读取声明，并保留晚于 128k 的绘图设置', async () => {
+    state.files.set('/ws/macros.sty', String.raw`\def\radius{1}`);
+    state.files.set('/ws/extra.tex', String.raw`\def\pair#1,#2;{(#1,#2)}`);
+    state.openDocuments = [makeDocument('/ws/macros.sty', 'latex', String.raw`\def\radius{3}\input{extra}`)];
+    const prefix = String.raw`\usepackage{macros}` + '\n' + 'body '.repeat(28_000) + String.raw`\tikzset{thickline/.style={blue,thick}}`;
+    const document = makeDocument('/ws/main.tex', 'latex', prefix + String.raw`\begin{tikzpicture}\end{tikzpicture}`);
+    const workspace = new DefinitionWorkspace();
+    try {
+      const context = await workspace.getTikzContext(document, prefix.length);
+      expect(context).toContain(String.raw`\def\radius{3}`);
+      expect(context).toContain(String.raw`\def\pair#1,#2;{(#1,#2)}`);
+      expect(context).toContain('thickline/.style={blue,thick}');
+      expect(context).not.toContain('body');
+      expect(context).not.toContain('\\input');
+      expect(state.readCount).toBe(1);
+    } finally { workspace.dispose(); }
+  });
+
+  it('TikZ 图形内编辑复用上下文；图形前编辑立即失效', async () => {
+    const prefix = String.raw`\def\radius{2}` + '\n';
+    const body = String.raw`\begin{tikzpicture}\draw(0,0)--(2,1);\end{tikzpicture}`;
+    const first = makeDocument('/ws/main.tex', 'latex', prefix + body);
+    state.activeDocument = first;
+    const workspace = new DefinitionWorkspace();
+    try {
+      const ready = workspace.getTikzContext(first, prefix.length);
+      await ready;
+      const second = makeDocument('/ws/main.tex', 'latex', prefix + body.replace('(2,1)', '(3,1)'), 2);
+      state.activeDocument = second;
+      const point = first.positionAt(prefix.length + body.indexOf('2,1'));
+      for (const listener of state.changeListeners) listener({ document: second, contentChanges: [{ range: new vscode.Range(point, point), rangeLength: 1, text: '3' }] } as never);
+      expect(workspace.getTikzContext(second, prefix.length)).toBe(ready);
+      const third = makeDocument('/ws/main.tex', 'latex', prefix.replace('{2}', '{4}') + body, 3);
+      state.activeDocument = third;
+      const definition = first.positionAt(prefix.indexOf('2'));
+      for (const listener of state.changeListeners) listener({ document: third, contentChanges: [{ range: new vscode.Range(definition, definition), rangeLength: 1, text: '4' }] } as never);
+      expect(await workspace.getTikzContext(third, prefix.length)).toContain(String.raw`\def\radius{4}`);
+    } finally { workspace.dispose(); }
+  });
+
+  it('自动识别 cls/sty 的递归宏包、sisetup 与自定义单位，并实际渲染', async () => {
+    state.files.set('/ws/local.cls', String.raw`\RequirePackage{local}`);
+    state.files.set('/ws/local.sty', String.raw`
+\RequirePackage[locale=DE]{siunitx}
+\RequirePackage{mathtools}
+\sisetup{group-digits=false}
+\DeclareSIUnit{\speed}{\kilo\metre\per\second}
+\DeclarePairedDelimiter{\norm}{\lVert}{\rVert}
+\DeclareRobustCommand{\measurement}[1]{\qty{#1}{\speed}}
+\gdef\RR{\ensuremath{\mathbb{R}}}`);
+    const document = makeDocument('/ws/main.tex', 'latex', String.raw`\documentclass{local}
+\sisetup{output-decimal-marker={,}}
+$\measurement{1234.56}+\RR$`);
+    const workspace = new DefinitionWorkspace();
+    const snapshot = await workspace.getSnapshot(document);
+    expect(snapshot.packages).toEqual(['local', 'siunitx', 'mathtools']);
+    expect(snapshot.commands).toEqual(['\\speed', '\\norm', '\\measurement', '\\RR']);
+    expect(snapshot.prelude).toContain('\\sisetup{locale=DE}');
+    expect(snapshot.prelude).toContain('\\sisetup{group-digits=false}');
+    expect(snapshot.limitations).toEqual([]);
+    const renderer = new MathJaxSvgRenderer();
+    const result = renderer.render({ expression: String.raw`\text{\measurement{1234.56} \RR}+\norm*{\frac{x}{y}}`,
+      definitionFingerprint: snapshot.fingerprint, definitionPrelude: snapshot.prelude,
+      packages: snapshot.packages, displayMode: true, foreground: '#ddd', caretColor: '#f90',
+      scale: 1, exPx: 7, markUnknownCommands: false });
+    expect(result.svg).toContain('data-c="2C"');
+    expect(result.svg).toContain('data-c="211D"');
+    expect(result.svg).not.toContain('\\measurement');
+    renderer.clear(); workspace.dispose();
+  });
+
+  it('大文档末尾输入复用同一语义快照，编辑点只读取 128 字符窗口', async () => {
+    const original = String.raw`\def\value{3}` + '\n' + 'text '.repeat(100_000) + '$x$';
+    const document = makeDocument('/ws/main.tex', 'latex', original);
+    state.activeDocument = document;
+    const workspace = new DefinitionWorkspace();
+    const snapshot = await workspace.getSnapshot(document);
+    const at = original.length - 1;
+    const updated = makeDocument('/ws/main.tex', 'latex', original.slice(0, at) + '+1' + original.slice(at), 2);
+    const read = vi.spyOn(updated, 'getText');
+    state.activeDocument = updated;
+    for (const listener of state.changeListeners) listener({ document: updated, reason: undefined, contentChanges: [
+      { range: new vscode.Range(document.positionAt(at), document.positionAt(at)), rangeOffset: at, rangeLength: 0, text: '+1' },
+    ] } as vscode.TextDocumentChangeEvent);
+    expect(await workspace.getSnapshot(updated)).toBe(snapshot);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.results[0]?.value.length).toBe(128);
+    workspace.dispose();
+  });
+
+  it('插入新宏仍刷新，淘汰旧文档缓存后能按需恢复', async () => {
+    const document = makeDocument('/ws/main.tex', 'latex', String.raw`\def\value{3} $x$`);
+    const read = vi.spyOn(document, 'getText');
+    const workspace = new DefinitionWorkspace();
+    await workspace.getSnapshot(document);
+    const initialReads = read.mock.calls.length;
+    for (let i = 0; i < 20; i++) await workspace.getSnapshot(makeDocument(`/ws/file${i}.tex`, 'latex', '$x$'));
+    expect((await workspace.getSnapshot(document)).commands).toContain('\\value');
+    expect(read.mock.calls.length).toBeGreaterThan(initialReads);
+    const addition = String.raw`\def\extra{E}`;
+    const updated = makeDocument('/ws/main.tex', 'latex', document.getText() + addition, 2);
+    state.activeDocument = updated;
+    const end = document.positionAt(document.getText().length);
+    for (const listener of state.changeListeners) listener({ document: updated, reason: undefined, contentChanges: [
+      { range: new vscode.Range(end, end), rangeOffset: document.getText().length, rangeLength: 0, text: addition },
+    ] } as vscode.TextDocumentChangeEvent);
+    expect((await workspace.getSnapshot(updated)).commands).toContain('\\extra');
+    workspace.dispose();
+  });
+
+  it('章节 root 指令继承主文件导言区，不加载其他章节的正文宏', async () => {
+    state.files.set('/ws/main.tex', String.raw`\usepackage{units}\newcommand{\global}{G}
+\begin{document}\input{chapter}\def\later{bad}\end{document}`);
+    state.files.set('/ws/units.sty', String.raw`\RequirePackage{siunitx}\sisetup{round-mode=places,round-precision=2}`);
+    const document = makeDocument('/ws/chapters/chapter.tex', 'latex', String.raw`% !TeX root = ../main.tex
+\def\local{L} $\qty{1.234}{\metre}+\global+\local$`);
+    const workspace = new DefinitionWorkspace();
+    const snapshot = await workspace.getSnapshot(document);
+    expect(snapshot.commands).toContain('\\global');
+    expect(snapshot.commands).toContain('\\local');
+    expect(snapshot.commands).not.toContain('\\later');
+    expect(snapshot.packages).toContain('siunitx');
+    expect(snapshot.prelude).toContain('round-precision=2');
+    workspace.dispose();
+  });
+
+  it('自动匹配唯一已打开主文件；多个候选时不猜测', async () => {
+    const parent = makeDocument('/ws/main.tex', 'latex', String.raw`\def\rootmacro{R}\begin{document}\input{chapter}`);
+    const document = makeDocument('/ws/chapter.tex', 'latex', '$x$');
+    state.openDocuments.push(parent);
+    const workspace = new DefinitionWorkspace();
+    expect((await workspace.getSnapshot(document)).commands).toContain('\\rootmacro');
+    state.openDocuments.push(makeDocument('/ws/other.tex', 'latex', String.raw`\begin{document}\include{chapter}`));
+    workspace.invalidate();
+    const ambiguous = await workspace.getSnapshot(document);
+    expect(ambiguous.commands).not.toContain('\\rootmacro');
+    expect(ambiguous.limitations.join()).toContain('多个已打开主文件');
+    workspace.dispose();
+  });
+
+  it('编辑主文件 input 的导言文件时，宏只收集到当前光标', async () => {
+    state.files.set('/ws/main.tex', String.raw`\def\before{B}\input{preamble}\def\after{A}\begin{document}`);
+    const text = String.raw`% !TeX root = main.tex
+\def\local{L} $x$ \def\later{Y}`;
+    const document = makeDocument('/ws/preamble.tex', 'latex', text);
+    state.openDocuments.push(document);
+    const workspace = new DefinitionWorkspace();
+    const snapshot = await workspace.getSnapshot(document, text.indexOf('$x$'));
+    expect(snapshot.commands).toEqual(['\\before', '\\local']);
+    workspace.dispose();
+  });
+
+  it('依赖先命中同目录准确路径，不被已打开的同名其他 sty 抢走', async () => {
+    state.files.set('/ws/chapter/local.sty', String.raw`\newcommand{\right}{R}`);
+    state.openDocuments = [makeDocument('/ws/other/local.sty', 'latex', String.raw`\newcommand{\wrong}{W}`)];
+    const workspace = new DefinitionWorkspace();
+    const snapshot = await workspace.getSnapshot(makeDocument('/ws/chapter/main.tex', 'latex', String.raw`\usepackage{local}`));
+    expect(snapshot.commands).toEqual(['\\right']);
+    workspace.dispose();
+  });
+
+  it('新增宏包参与缓存键；光标之后的宏包不提前生效', async () => {
+    const workspace = new DefinitionWorkspace();
+    const text = String.raw`\usepackage{siunitx}
+$\num{1}$
+\usepackage{physics}`;
+    const first = await workspace.getSnapshot(makeDocument('/ws/main.tex', 'latex', text), text.indexOf('$'));
+    const second = await workspace.getSnapshot(makeDocument('/ws/main.tex', 'latex', text), text.length);
+    expect(first.packages).toEqual(['siunitx']);
+    expect(second.packages).toEqual(['siunitx', 'physics']);
+    expect(first.fingerprint).not.toBe(second.fingerprint);
+    workspace.dispose();
   });
 
   it('按光标前声明和递归依赖顺序生成安全 prelude', async () => {
@@ -568,10 +769,17 @@ function makeDocument(
     uri: vscode.Uri.file(path),
     languageId,
     version,
-    getText: () => text,
+    getText: (range?: vscode.Range) => range ? text.slice(
+      (starts[range.start.line] ?? 0) + range.start.character, (starts[range.end.line] ?? 0) + range.end.character,
+    ) : text,
+    positionAt: (offset: number) => {
+      let line = 0;
+      while (line + 1 < starts.length && starts[line + 1]! <= offset) line++;
+      return { line, character: offset - starts[line]! };
+    },
     lineCount: lines.length,
     lineAt: (line: number) => ({
-      range: { end: { line, character: lines[line]?.length ?? 0 } },
+      range: { start: { line, character: 0 }, end: { line, character: lines[line]?.length ?? 0 } },
     }),
     offsetAt: (position: { readonly line: number; readonly character: number }) =>
       (starts[position.line] ?? text.length) + position.character,

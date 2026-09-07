@@ -8,3 +8,6 @@ coverage/
 .env.*
 .grok/
 
+
+.tmp-tikz-smoke/
+resources/tikz-worker-source.tar.gz

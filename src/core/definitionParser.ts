@@ -1,4 +1,4 @@
-export type DefinitionKind = 'command' | 'environment' | 'color';
+export type DefinitionKind = 'command' | 'environment' | 'color' | 'configuration';
 
 export type DefinitionDeclaration =
   | 'declare-math-alphabet'
@@ -8,6 +8,9 @@ export type DefinitionDeclaration =
   | 'renewcommand'
   | 'providecommand'
   | 'def'
+  | 'sisetup'
+  | 'declare-si-unit'
+  | 'declare-paired-delimiter'
   | 'declare-math-operator'
   | 'newenvironment'
   | 'renewenvironment'
@@ -81,6 +84,7 @@ const COMMAND_DECLARATIONS: Readonly<Record<string, {
   operation: DefinitionOperation;
 }>> = {
   newcommand: { declaration: 'newcommand', operation: 'new' },
+  DeclareRobustCommand: { declaration: 'newcommand', operation: 'replace' },
   renewcommand: { declaration: 'renewcommand', operation: 'renew' },
   providecommand: { declaration: 'providecommand', operation: 'provide' },
 };
@@ -221,7 +225,11 @@ export function parseDefinitions(
       parsed = parseMathAlphabet(masked, sourceId, lineStarts, offset, control.end, control.name);
     } else if (COLOR_DECLARATIONS[control.name]) {
       parsed = parseColorDefinition(masked, sourceId, lineStarts, offset, control.end, control.name);
-    } else if (control.name === 'def') {
+    } else if (control.name === 'DeclarePairedDelimiter') {
+      parsed = parsePairedDelimiter(masked, sourceId, lineStarts, offset, control.end);
+    } else if (control.name === 'sisetup' || control.name === 'DeclareSIUnit') {
+      parsed = parseSiDeclaration(masked, sourceId, lineStarts, offset, control.end, control.name);
+    } else if (control.name === 'def' || control.name === 'gdef') {
       parsed = parseDef(masked, sourceId, lineStarts, offset, control.end);
     } else if (control.name === 'DeclareMathOperator') {
       parsed = parseMathOperator(masked, sourceId, lineStarts, offset, control.end);
@@ -244,6 +252,50 @@ export function parseDefinitions(
   }
 
   return definitions;
+}
+
+/** mathtools 的自定义定界符，保留原生的星号及大小参数语义。 */
+function parsePairedDelimiter(
+  text: string, sourceId: string, lineStarts: readonly number[], start: number, afterKeyword: number,
+): ParsedAtOffset {
+  const name = readCommandNameArgument(text, afterKeyword);
+  const left = name ? readTeXGroup(text, skipTeXWhitespace(text, name.end)) : undefined;
+  const right = left ? readTeXGroup(text, skipTeXWhitespace(text, left.end)) : undefined;
+  if (!name || !left || !right) return { end: statementEnd(text, afterKeyword) };
+  const replacement = `${left.content}#1${right.content}`;
+  const definition = buildDefinition({
+    kind: 'command', name: name.name, declaration: 'declare-paired-delimiter', operation: 'new',
+    arguments: [{ index: 1, kind: 'mandatory' }], limitations: analyzeReplacement(replacement, 1),
+    sourceId, lineStarts, start, end: right.end, starred: false, replacement,
+    beginReplacement: left.content, endReplacement: right.content,
+  });
+  return { definition, end: right.end };
+}
+
+/** siunitx 的全局格式和自定义单位也属于预览依赖，保持源码顺序。 */
+function parseSiDeclaration(
+  text: string, sourceId: string, lineStarts: readonly number[],
+  start: number, afterKeyword: number, command: string,
+): ParsedAtOffset {
+  let cursor = skipTeXWhitespace(text, afterKeyword);
+  const unit = command === 'DeclareSIUnit';
+  if (unit) {
+    const optional = readTeXGroup(text, cursor, '[', ']');
+    if (optional) cursor = skipTeXWhitespace(text, optional.end);
+  }
+  const name = unit ? readCommandNameArgument(text, cursor) : undefined;
+  if (unit && !name) return { end: statementEnd(text, cursor) };
+  const body = readTeXGroup(text, skipTeXWhitespace(text, name?.end ?? cursor));
+  if (!body) return { end: statementEnd(text, cursor) };
+  const definition = buildDefinition({
+    kind: unit ? 'command' : 'configuration',
+    name: name?.name ?? `siunitx:${sourceId}:${start}`,
+    declaration: unit ? 'declare-si-unit' : 'sisetup', operation: 'replace',
+    arguments: [], limitations: analyzeReplacement(body.content, 0),
+    sourceId, lineStarts, start, end: body.end, starred: false,
+    replacement: body.content,
+  });
+  return { definition, end: body.end };
 }
 
 function parseLatexCommand(

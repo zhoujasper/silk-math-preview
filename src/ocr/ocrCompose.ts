@@ -44,8 +44,11 @@ export function formulaLikeness(text: string): number {
 export function prefersWholeFormula(textOcr: string, latex: string, formulaOk: boolean): boolean {
   const cleaned = cleanRecognizedLatex(latex);
   if (!formulaOk || !cleaned) return false;
-  const proseUnits = (textOcr.match(CJK) ?? []).length + (textOcr.match(LATIN_WORD) ?? []).length;
-  if (proseUnits >= 10 && formulaLikeness(textOcr) < 0.35) return false;
+  const mathWords = /^(?:sin|cos|tan|cot|sec|csc|log|ln|lim|max|min|sup|inf|det|mod|gcd|exp|sqrt|arcsin|arccos|arctan)$/i;
+  const proseUnits = (textOcr.match(CJK) ?? []).length
+    + (textOcr.match(LATIN_WORD) ?? []).filter((word) => !mathWords.test(word)).length;
+  // 短句也可能被 MFR 包进 \\mathrm 再编出符号；明显文字优先保留文字模型结果。
+  if (proseUnits >= 2 && formulaLikeness(textOcr) < 0.35) return false;
   return formulaLikeness(cleaned) >= 0.35 || proseUnits < 5;
 }
 

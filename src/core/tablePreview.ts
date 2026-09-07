@@ -113,7 +113,7 @@ export function tablePreambleLength(body: string): number {
 }
 
 /** 只保留 MathJax `array` 认识的 l/c/r 与竖线，其余列类型按对齐方式近似。 */
-export function normalizeColumnSpec(spec: string, depth = 0): string {
+export function normalizeColumnSpec(spec: string, depth = 0, numeric?: Array<string | undefined>): string {
   let normalized = '';
   let cursor = 0;
   while (cursor < spec.length) {
@@ -123,21 +123,26 @@ export function normalizeColumnSpec(spec: string, depth = 0): string {
       cursor += 1;
     } else if (character === '|' || character === 'l' || character === 'c' || character === 'r') {
       normalized += character;
+      if (character !== '|') numeric?.push(undefined);
       cursor += 1;
     } else if (character === 'p' || character === 'm' || character === 'b') {
       // p/m/b 的宽度参数在预览里没有意义，按左对齐处理。
       normalized += 'l';
+      numeric?.push(undefined);
       cursor = readGroup(spec, cursor + 1)?.end ?? cursor + 1;
     } else if (character === 'X' || character === 'L' || character === 'J') {
       normalized += 'l';
+      numeric?.push(undefined);
       cursor += 1;
     } else if (character === 'Y' || character === 'C') {
       normalized += 'c';
+      numeric?.push(undefined);
       cursor += 1;
     } else if (character === 'R' || character === 'S' || character === 'D') {
       normalized += 'r';
       cursor += 1;
       const argument = readGroup(spec, cursor) ?? readOptional(spec, cursor);
+      numeric?.push(character === 'S' ? argument?.content ?? '' : undefined);
       if (argument) cursor = argument.end;
     } else if (character === '@' || character === '!' || character === '>' || character === '<') {
       cursor = readGroup(spec, cursor + 1)?.end ?? cursor + 1;
@@ -148,14 +153,17 @@ export function normalizeColumnSpec(spec: string, depth = 0): string {
         cursor += 1;
       } else {
         const times = Math.min(MAX_COLUMN_REPEAT, Math.max(0, Number.parseInt(count.content, 10) || 0));
+        const nested: Array<string | undefined> = [];
         normalized += depth < MAX_CELL_DEPTH
-          ? normalizeColumnSpec(repeated.content, depth + 1).repeat(times)
+          ? normalizeColumnSpec(repeated.content, depth + 1, nested).repeat(times)
           : 'c'.repeat(times);
+        for (let i = 0; i < times; i++) numeric?.push(...(depth < MAX_CELL_DEPTH ? nested : [undefined]));
         cursor = repeated.end;
       }
     } else if (/[A-Za-z]/.test(character)) {
       // 未知列类型按居中处理，宁可对齐方式不准，也不能少一列让后面全部串位。
       normalized += 'c';
+      numeric?.push(undefined);
       cursor += 1;
     } else {
       cursor += 1;
@@ -479,12 +487,13 @@ function hoistRules(text: string): { readonly rules: string; readonly rest: stri
   return { rules, rest };
 }
 
-function translateRow(text: string): TableRow {
+function translateRow(text: string, numeric: readonly (string | undefined)[] = []): TableRow {
   let rules = '';
-  const cells = splitTopLevel(text, '&').map((raw) => {
+  const cells = splitTopLevel(text, '&').map((raw, column) => {
     const hoisted = hoistRules(raw);
     rules += hoisted.rules;
-    return translateCell(hoisted.rest, 0);
+    return hoisted.rest.trim() && numeric[column] !== undefined && !/\\class\{silk-span-/.test(hoisted.rest)
+      ? `\\silkSCell{${numeric[column]}}{${hoisted.rest}}` : translateCell(hoisted.rest, 0);
   });
   return { rules, cells };
 }
@@ -496,11 +505,13 @@ function translateRow(text: string): TableRow {
 export function buildTableExpression(body: string): string {
   const preamble = readTablePreamble(body);
   const rewritten = rewriteTableCommands(body.slice(preamble.bodyStart));
+  const numeric: Array<string | undefined> = [];
+  const alignment = normalizeColumnSpec(preamble.spec, 0, numeric);
   const rows = splitTopLevel(rewritten, '\\\\')
-    .map(translateRow)
+    .map((row) => translateRow(row, numeric))
     .filter((row) => row.rules !== '' || row.cells.some((cell) => cell !== ''));
   const columns = rows.reduce((maximum, row) => Math.max(maximum, row.cells.length), 0);
-  const spec = padColumnSpec(normalizeColumnSpec(preamble.spec), Math.max(1, columns));
+  const spec = padColumnSpec(alignment, Math.max(1, columns));
   const rendered = rows
     .map((row) => `${row.rules}${row.cells.join('&')}`)
     .join('\\\\');

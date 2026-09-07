@@ -100,6 +100,8 @@ describe('识别结果整理', () => {
     expect(lineShouldTryFormula('\\sum_{i=1}^n x_i = 0')).toBe(true);
     expect(prefersWholeFormula('u = v', '\\alpha + \\beta', true)).toBe(true);
     expect(prefersWholeFormula('因此我们得到下面的结论并且对所有整数都成立所以这是一段说明', '\\alpha', true)).toBe(false);
+    expect(prefersWholeFormula('Hello world 123', '\\mathrm { H e l l o ~ w o r l d } 1 \\geq 3', true)).toBe(false);
+    expect(prefersWholeFormula('sin x cos y', '\\sin x \\cos y', true)).toBe(true);
   });
 
   it('混排时公式行输出 LaTeX、文字行保持原文', () => {

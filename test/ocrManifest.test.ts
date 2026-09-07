@@ -40,8 +40,9 @@ describe('OCR 可选包合同', () => {
     expect(windows.command).toBe('powershell.exe');
     expect(windows.args).toContain('C:\\A B\\shot.png');
     expect(captureCommands('darwin', '/tmp/a b.png', '')[0]).toEqual({
-      command: '/usr/sbin/screencapture', args: ['-x', '/tmp/a b.png'],
+      command: '/usr/sbin/screencapture', args: ['-i', '-s', '-x', '/tmp/a b.png'],
     });
-    expect(captureCommands('linux', '/tmp/a.png', '')).toHaveLength(5);
+    expect(captureCommands('linux', '/tmp/a.png', '')).toHaveLength(3);
+    expect(windows.args).toContain('-STA');
   });
 });

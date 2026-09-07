@@ -1,5 +1,6 @@
 import { build, context } from 'esbuild';
 import { resolve } from 'node:path';
+import { archiveTikzSource } from './tikz-source-archive.mjs';
 
 const watch = process.argv.includes('--watch');
 const testChannel = process.env.SILK_CHANNEL === 'test';
@@ -25,11 +26,27 @@ const shared = {
 const builds = [
   {
     ...shared,
+    entryPoints: ['src/vscode/tikz-context.ts'],
+    outfile: 'dist/tikz-context.js',
+    platform: 'node',
+    format: 'cjs',
+  },
+  {
+    ...shared,
+    entryPoints: ['src/tikz/worker.ts'],
+    outfile: 'dist/tikz-worker.js',
+    platform: 'node',
+    format: 'cjs',
+    // TeX/DVI dependencies are fetched as unmodified, pinned optional packages.
+    external: ['node-tikzjax', '@prinsss/dvi2html'],
+  },
+  {
+    ...shared,
     entryPoints: ['src/extension.ts'],
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    external: ['vscode'],
+    external: ['vscode', './tikz-context.js'],
   },
   {
     ...shared,
@@ -43,16 +60,18 @@ const builds = [
     minify: !watch,
     sourcemap: watch,
     logLevel: 'info',
-    entryPoints: ['src/ocr/ocrWebview.ts'],
-    outfile: 'dist/ocr-webview.js',
-    platform: 'browser',
-    format: 'iife',
-    target: 'chrome114',
+    entryPoints: ['src/ocr/ocrWorker.ts'],
+    outfile: 'dist/ocr-worker.js',
+    platform: 'node',
+    format: 'cjs',
+    target: 'node18',
     alias: {
       'onnxruntime-web': resolve('src/ocr/ortShim.ts'),
     },
   },
 ];
+
+await archiveTikzSource();
 
 if (watch) {
   const contexts = await Promise.all(builds.map((options) => context(options)));

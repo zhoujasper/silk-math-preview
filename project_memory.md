@@ -1,5 +1,117 @@
 # Silk Math Preview 项目记忆
 
+## 2026-09-07 GitHub 同步（0.2.1）
+
+- 用户授权更新 GitHub，沿用现有 `main` 和 0.2.1 版本，整合自远端 0.1.76 以来的 OCR、数学兼容、TikZ 与性能改进、文档及测试。主代理独立完成本地检查和提交准备，保留用户唯一 Git 作者。
+- 已刷新远端并确认基线 `2ce56337a57351753212bfe0bad616408e261c6e` 没有分叉；9 个文本文件恢复仓库原有 LF 换行，其中 4 个没有内容改动。全部实际代码修改保留。
+- 本轮 `npm run verify` 通过：34 files / 373 tests；核心 stmts/branch/lines 93.65%/87.88%/96.36%。Node 26.8.1 普通公式 cold p50/p95 47.55/51.43 ms、warm 3.75/5.37 ms、scanner p95 0.477 ms，idle restart 通过。未重复复杂 TikZ 长测，不运行浏览器或 Extension Host。
+- 重新打包并核验双通道 ID、默认开关、22 条目、归档完整性、Worker 与当前构建一致、GPL 对应源码逐文件一致；工作目录 `dist` 恢复正式版。原 VSIX 保存在 `.tmp-tikz-smoke/github-sync-20260907-original-449_5v7_/`。
+- 本轮正式 VSIX 2,226,136 B，SHA-256 `9a57cabdcd9c0b12ff56ced52ab0d6760c22963d54c6525f5be92d32b63fde35`；测试 VSIX 2,226,263 B，SHA-256 `241aca006ca50d3b4aad698488fbd6fb271a02ec5bcab9f38ea1d8efe27837c4`。源码归档随 LF 规范化更新，Worker 字节没有变化。
+- 现有 CI 会在 `main` 推送后自动测试、打包和发布 Marketplace / GitHub Release；远端是否完成需检查当次 Actions，而不是依赖本地成功记录。安装包、缓存、模型和临时验证输出不提交 Git。
+
+## 2026-09-07 TikZ 兼容修复、复杂图验证与资源优化（0.2.1）
+
+- 修复截图 `compat=1.18`：旧缓存含 pgfplots 1.16；现在随 VSIX 分发未修改的 pgfplots 1.18.3 完整宏源码（105 个 TeX 文件，压缩 720,878 B，SHA-256 `77f39113e52895dde53d042dd49c0600ca21884a7cdb1bf7121354b73e344ecb`），仅在可选 Worker 内覆盖旧包，原 WASM 缓存不改写、不重下载。默认兼容 1.18，尊重显式设置。
+- 保留库/宏包选项并在导言区加载；支持分组、填充、统计、日期等库，补齐旧式样式、数学函数、图层与内存表声明。修复渐变变黑、纹理定义缺失；缺字、缺失 SVG 引用、未支持的 SVG 驱动功能会明确报错。
+- 新增测试发现圆与线交点触发 300 项参数栈上限。对固定 SHA 的 PGF 库在内存中将四个递归函数体包装成无参数延续，提前释放参数帧；运算、精度、顺序不改，真实圆线交点通过。适配器与对应源码随 GPL Worker 分发。
+- 密集曲面原 SVG 嵌套深度 1165，图像读取器拒绝。现在线性重建并压平纯继承颜色分组至 8 层；保留变换、裁剪、命名引用和组透明度。重复标签复用原坐标下的精确轮廓，80 分式同一帧从 978,101 B 降至 100,233 B。36 张真实 SVG 均由默认独立图像读取器成功栅格化；7 组复杂图做逐像素对照完全一致；密集曲面新 SVG 在默认读取器中成功并人工查看。旧曲面无法正常读入，未宣称它也完成像素对照。
+- 宏包与原生定义分开缓存，各只保留当前一份；相同页共享。抛物线场景核心/宏包/定义的逻辑快照约 10.38/14.75/14.75 MiB，实际共享缓冲约 18.88 MiB，WASM 固定 68.75 MiB。上下文/帧错误均能恢复；图形内全局定义不污染下一帧。关闭仍不加载 TikZ，空闲 60 秒、Esc/关闭与 15 秒超时回收。
+- 同一机器、VS Code Node 24.18.1、相同 21 次外部宏编辑前后：首次 475.79/481.26 ms，热 p50 319.53/103.01 ms，p95 324.68/105.88 ms；CPU 7202.01/2798.93 ms，测试进程峰值 RSS 297.81/283.34 MiB。RSS 不是 VS Code 总内存或净增量；不宣称该组件只用几 MB。
+- 最终 Worker 96 次真实正确性/恢复请求通过：31 种图库图形、8 个兼容/设置场景、3 种额外环境、16 组原生定义对照及错误/限制/超时/空闲恢复。另有 109 次压力请求，含 8 组复杂图各 6 次源码变化、30 请求突发合并（28 次跳过）、30 帧多公式标签长测及重启；实际计算 81 次。新增树、交点、图层、角标、逻辑门、曲线文字、参数曲线和向量场。
+- 长测期间环境有明显波动：普通曲线 p50 268 ms、625 点曲面 p50 7.27 秒（此前平稳轮约 2.27 秒）；最终 30 帧标签均不超过 324 ms。测试宿主定时器间隔 p95/max 12.10/25.20 ms，空闲 500 ms CPU 0.49 ms。记录全部数据于 docs/TIKZ_PERFORMANCE.md，不把最快一轮当作普遍承诺。任意 TikZ/复杂图瞬时低耗无法保证；LuaTeX、外部文件、额外 CTAN、CJK、path fading 等边界仍明确保留。
+- 校验：34 files / 373 tests；typecheck、coverage、build、普通公式 benchmark、size 均通过。核心 stmts/branch/lines 93.65%/87.88%/96.36%；普通公式 Node 26 cold p50/p95 47.48/51.33 ms，warm 3.67/5.38 ms，scanner p95 0.362 ms，idle restart 通过。主 bundle 202,783 B，TikZ Worker 293,345 B，上下文 4,841 B，OCR Worker 223,351 B。
+- 正式 `silk-math-preview-0.2.1.vsix`：2,226,257 B，SHA-256 `7b68723501d7eae75c1836ae35d0ea95d7a630ecc577059e2d68f0b23c16cf38`。
+- 测试 `silk-math-preview-test-0.2.1.vsix`：2,226,384 B，SHA-256 `be320cd1f1df58066995763f328c585459c042205a12b9ae5119d75e9208635b`。
+- 均 22 条目，独立通道 ID/设置/命令且 TikZ 默认 false。正式包提取的 Worker 再次通过全部 96 次请求；包内 Worker/上下文与当前构建逐字节一致，对应源码归档逐文件核验，工作目录 dist 恢复正式通道。保留旧 VSIX 及所有此前 OCR/数学修改。主代理独立实现与验证；不打开浏览器或 Extension Host，不安装、提交、推送或发布。
+
+## 2026-09-07 版本统一为 0.2.0
+
+- 按用户要求将 package.json、package-lock.json 根包版本同步为 0.2.0；CHANGELOG 新增对应版本记录。
+- 本轮由主代理独立完成版本调整与双通道重新打包；沿用 0.1.81 已验证的功能和性能实现，TikZ 默认关闭。
+- 核验：双通道构建、包体积门限、包内版本/命名空间/默认开关及 GPL 源码归档一致性通过；两个包内 Worker 与当前构建逐字节一致，工作目录 dist 已恢复正式通道并与正式 VSIX 一致。本次仅调整版本，未重复运行上一轮的渲染和性能测试。
+- 产物 `silk-math-preview-0.2.0.vsix`：1,497,528 B，SHA-256 `e249c5991605ae299d79b81b9413991041d7913c0c01b353f5c44ebecb6b0bb6`；21 条目，ID `silkmath.silk-math-preview`。
+- 产物 `silk-math-preview-test-0.2.0.vsix`：1,497,654 B，SHA-256 `30888f49fe9b08c46c54910443346d302e9d0302fc1e63f692c414df0b433341`；21 条目，ID `silkmath.silk-math-preview-test`。
+
+## 2026-09-07 TikZ 原生定义与底层优化（0.1.81）
+
+- TikZ 使用独立原生上下文，按源码顺序保留 `def/gdef/edef/xdef/let`、定界参数、new/renewcommand、局部/全局作用域与常用条件分支；不用 MathJax 的重排/转换定义。支持图形内定义、数学分隔符里的图形前定义、未保存的本地 sty/cls/tex 依赖，以及主文件导言区。图形之后的重定义不提前生效。
+- 原生声明提取器为独立 `dist/tikz-context.js`，真正进入 TikZ 时才加载。图形内编辑复用上下文，不重新读取大段前缀；前置定义或依赖变化则失效。取消 128k 截断，当前文档前缀上限 8 MiB，展开上下文与图形合计 200k 字符；动态 catcode/依赖/生成声明等仍有提取边界。
+- 新的同步、纯内存 TeX ABI 适配器：取消每个文件的 asyncify 定时等待；WASM 只分配一次 68.75 MiB 工作内存，核心快照只保留约 10.4 MiB 非零页。对固定 WASM 检查四个 i32 全局布局并仅添加导出；完整恢复全局、内存、文件游标/输出，缓存最多一个宏包/上下文检查点。上游包文件不改写，额外代码随 GPL Worker 对应源码归档发布。
+- 输入合并 80 ms，仍只运行当前和最新等待请求；原生语法错误/I/O 错误保留可恢复检查点，避免反复冷启动。图形内 gdef 不泄漏到下一帧；字体最多缓存 16 项。下载组件路径在本次会话校验成功后复用，Esc/关闭仍销毁 Worker，空闲默认 60 秒，超时 15 秒。
+- VS Code Node 24.18.1、相同 21 次抛物线请求：旧/新首次 543.9/494.3 ms，热 p50 389.7/103.8 ms、p95 391.6/106.8 ms，累计 CPU 7688.0/2831.7 ms，测试进程峰值 RSS 447.7/275.7 MiB。RSS 含驱动/Node 固定开销，不是 VS Code 总内存；输入合并等待不计入渲染耗时。详见 docs/TIKZ_PERFORMANCE.md。
+- 真实 SVG 对照原包：用户原图（280×126）、箭头/希腊字母节点、文字标签逐字节一致；修复新 I/O 边界引入的多余空格后再验证。原生宏与显式展开图形逐字节对比；补充交换图、电路、3D 绘图、错误/超时/空闲恢复。groupplots 不在当前运行时组件内，明确返回缺失文件，不能宣称支持全部 TeX/宏包。
+- 校验：32 files / 357 tests，typecheck、核心 coverage stmts/branch/lines 93.65%/87.88%/96.36%、build、普通公式 benchmark、size 通过。普通公式本机 Node 26 冷 p50/p95 48.75/52.41 ms，热 3.90/5.33 ms，scanner p95 0.478 ms，idle restart 通过。
+- 主代理独立完成；保留同目录 0.1.80 数字/表格优化、OCR 及所有旧安装包。未打开浏览器或 Extension Host；用户负责最终视觉验收。不开新分支、不提交、不推送或发布商店。
+- 产物 `silk-math-preview-0.1.81.vsix`：1,497,430 B，SHA-256 `c11331aa1fbc6eefdbff408cbe8d3b7faed79eae811666be4c4b449dcd02d987`；21 条目，ID `silkmath.silk-math-preview`，TikZ 默认关闭。
+- 产物 `silk-math-preview-test-0.1.81.vsix`：1,497,556 B，SHA-256 `505c83ebfdd54e35121f4bfa9b83bb39e5f8144e0dc39cce67500be224480c8e`；21 条目，ID `silkmath.silk-math-preview-test`，TikZ 默认关闭。
+- 正式/测试包内 TikZ Worker 与当前源码构建逐字节一致；两个包内的独立上下文模块均通过 VS Code Node 24.18.1 实际导入调用。正式包内 Worker 完成 50 次真实请求验证（16 个原生定义用例、交换图/电路/3D、语法和 I/O 错误、缺失库、超时与空闲恢复）。GPL 对应源码归档与当前文件逐字节一致。工作目录 dist 已恢复正式通道并与正式包一致。
+- 最终主 bundle 202,637 B，TikZ Worker 287,153 B、按需上下文 4,463 B，OCR Worker 223,351 B；200 KiB 主 bundle 和 2.5 MiB VSIX 硬门不变。
+
+
+## 2026-09-07 数字显示与底层性能（0.1.80）
+
+- 数字用十进制字符串按小数位、有效数字或不确定度舍入；支持补零、进位、half-even、方向控制和分离不确定度。精度限 ±1000，长整数不转浮点。
+- 单位改为解析实际使用的符号，移除每次调用注入上百个宏的路径；支持分式、负指数、符号除号、sticky-per、幂、用户单位。只缓存展开后的纯格式结果，用户局部重定义和下一帧隔离仍有效。
+- S 列按两侧实际 MathJax 字形宽度设置 MathML padding，保留原列数，不靠补几个空格，也不二次生成 SVG；普通公式不运行表格对齐测量。指数、数值宏、列选项、重复列和光标路径已测。
+- 根文件：显式 `% !TeX root = ../main.tex` 或唯一已打开主文件（最多看 16 份）；只继承导言区与依赖，多个候选提示指定。不全工作区反向搜索，也不执行动态 TeX。
+- 按键处理只读取前 128 字符；位于最后声明之后的普通输入复用语义版本，不重读/解析全文。宏/依赖过滤改线性游标，连续定义成批索引，序列化只做一次。
+- 解析文件/打开文档/快照/路径均有数量和估算大小上限；先 stat 拒绝过大文件，关闭文档清理，已失效异步遍历停止，旧结果不能覆盖新快照。保留原有依赖顺序和未保存文件语义。
+- 每帧及时清理 MathJax parseOptions、mathNode/latex、output math/table/container/document 引用，只保留可复用宏/字体；不依赖下一帧来释放大表格，空闲 Worker 仍默认 60 秒回收。
+- 本机 Node 26：24 个数量单位 p50 12.33→7.09 ms；4000 宏+4000 依赖 27.75→6.32 ms；5000 位数分组 13.25→0.059 ms。GC 后测试进程 heap 17.27→15.00 MiB。普通公式冷 p50/p95 53.05/58.67 ms、热 4.38/5.90 ms；不宣称所有路径都更快或这是 VS Code 总内存。详见 docs/PERFORMANCE_0.1.80.md。
+- 校验：32 files / 350 tests、typecheck、核心 coverage stmts/branch/lines 93.65%/87.88%/96.36%、build、benchmark、size 通过。主 bundle 200,495 B（仍低于 200 KiB）。不启动浏览器/Extension Host，最终图形验收由用户执行。
+- 协作：主代理独立完成；保留同目录 OCR/TikZ 更新与已有 VSIX。完整 TeX、复杂 xparse、任意 let/edef/xdef 和高级 siunitx 的剩余边界在 docs/MACRO_SUPPORT.md。
+- 双通道产物来自固定源码快照，包内 Worker 在 Node 26.8.1 与 VS Code Node 24.18.1 各通过 7 项实际渲染检查（截图表格、自定义宏、舍入、单位分式/不确定度、S 列、错误和恢复）；20 条目，通道 ID/命令和内容限制正确。未安装、提交、推送或发布商店。
+- 产物 `silk-math-preview-0.1.80-optimized.vsix`：1,487,047 B，SHA-256 `a797ae33d52253bae1f58a3d4d436d83c1da4d1b9b9b0242aae3765642f2b3fb`。
+- 产物 `silk-math-preview-test-0.1.80-optimized.vsix`：1,487,180 B，SHA-256 `31fea9f48b59df5a21e7cf5c57c2287253dd226f6b303a57bd261cd0109c7883`。
+- 打包后同目录独立 TikZ 任务继续修改 src/tikz/source.ts；本轮安装包保持已验证快照，数学渲染相关源码/Worker 和主 bundle 与交付版本一致，不覆盖其他任务的后续源码。
+
+
+## 2026-09-07 TikZ / pgfplots 实时图片（0.1.79）
+
+- 新增 `silkMath.tikz.enabled`，默认 false；现有 QuickPick 菜单增加「TikZ / pgfplots 实时预览」勾选项，点选不关菜单，状态立即刷新。测试通道对应 `silkMathTest.tikz.enabled`，也默认关闭。开启后把光标放进图形，不保存即可更新图片。
+- 扫描器把 `tikzpicture/tikzcd/pgfpicture/circuitikz` 作为完整区域；坐标轴标签里的 `$x$` 不再抢先成为公式。支持裸环境、数学分隔符包裹和 Markdown fence / notebook 里的源码；关闭时既不下载也不启动 TikZ 或标签公式 Worker。
+- 按需 WebAssembly TeX 引擎独立运行，真正生成 DVI/SVG；`axis/addplot` 自动加载 pgfplots，支持图形之前的常见绘图库/样式声明和已解析宏。网页 `&#x20;` 等空格只在渲染副本解码；未闭合环境补结束标记，其他错误保留当前图形上一帧，不插入 MathJax 光标。
+- 固定 `node-tikzjax@1.0.5` 和 `@prinsss/dvi2html@0.0.1` 原包，下载校验 SHA-512，解包禁止越界路径/链接并限制大小；组件缓存启动前验证各文件 SHA-256。源码不上传，TeX 只访问内存包文件，不调用系统 LaTeX、shell 或用户文件。此按需且默认关闭的组件是默认渲染路径不联网原则的明确扩展。
+- 文本转本地 BaKoMa 字形路径，清理 SVG 外链/事件/脚本，保留绘图原色和白底。180 ms 合并输入、latest-wins、重复光标请求复用、15 秒超时回收、默认 60 秒空闲释放；Esc/关闭防止在途结果复活。
+- 兼容范围：运行时 pgfplots 1.16，不是完整 TeX Live；外部图片/数据、gnuplot、LuaTeX、任意 CTAN 包及 CJK 字体不保证支持。额外 TikZ 前导声明读取当前文件前 128,000 字符内、图形之前的部分。详细说明 `docs/TIKZ.md`，手动样例 `test/fixtures/manual/tikz.tex`。
+- 验证：新增 18 项 TikZ 源码/默认开关/编辑器接线/请求取消/重启测试；合并工作区共 32 files / 326 tests，typecheck、coverage、build、benchmark、size 通过。核心 stmts/branch/lines `93.42%/87.64%/96.18%`。Node 26 真实 WASM 样例涵盖用户 axis 原文、x³ 修改、缺少结束环境、箭头节点、希腊字母和自定义宏；错误、无限循环超时后的恢复及空闲重启通过。用户例首次 488 ms、后续 374–376 ms；简单图形 13–38 ms，均仅代表本次本机环境。
+- 普通公式本轮 cold p50/p95 `48.60/66.42 ms`、warm `3.94/5.81 ms`、scanner p95 `0.464 ms`，idle restart 通过；未打开浏览器或 Extension Host，最终视觉与 Windows/Linux 实机验收由用户完成。
+- 主代理独立完成此功能；同目录并行完成的 0.1.78 数字/宏包改动和 `-macros.vsix` 均保留，最终整合版使用 0.1.79。不开分支、不提交、不推送或发布商店。
+- 许可：主扩展仍 MIT；独立可选 TikZ Worker 采用 GPL-3.0-or-later，原包许可与字形许可保留。VSIX 附第三方声明、GPL 全文及该 Worker 对应源码压缩包（许可证要求的定向源码例外），不含运行时 TeX/WASM/字体。渲染组件版本与代码分离，核心 200 KiB / VSIX 2.5 MiB 上限不变。
+- VSIX 内的 TikZ Worker 又用 VS Code 自带 Node 24.18.1 实跑：用户原图 510 ms，编辑为 x³ 后 411 ms，均输出 280×126 的自包含 SVG；此验证未打开 GUI。
+- 最终产物 `silk-math-preview-0.1.79.vsix`：1,481,290 B，SHA-256 `e2d8667dfe879f511802ee38af320b858abba8103847d62b0210477345c67b87`，20 个条目；ID `silkmath.silk-math-preview`，TikZ 默认关闭。
+- 最终产物 `silk-math-preview-test-0.1.79.vsix`：1,481,425 B，SHA-256 `0c871ed7f4bd470cbc99b51ef09399b146d42a6515caaefe7c143222297e7335`，20 个条目；ID `silkmath.silk-math-preview-test`，TikZ 默认关闭。
+- 两包归档完整性、通道清单、默认值、源码归档一致性及 Worker 字节一致性通过。正式 main 196,545 B、TikZ Worker 277,100 B；工作目录 dist 已恢复正式通道并与正式 VSIX 逐字节一致。保留原 0.1.76/0.1.77 和 0.1.78-macros 安装包。
+
+
+## 2026-09-07 数字、文本宏与宏包自动分析（0.1.78）
+
+- 截图中的 `tabular` 默认文本单元格不再原样打印 `\num`：MathJax 启用 `textmacros`，数字/单位命令在文本中显式交回数学解析。`\textbf`、嵌套宏、默认参数、`\ensuremath` 同时支持。
+- 新增 siunitx 常用 `\num/\SI/\si/\qty/\unit`、列表/范围/乘积、角度、常见单位和前缀。数字用字符串格式化，保留长整数、尾零、指数、括号不确定度；自定义数值常量有界展开，递归超过上限停止。
+- 自动从 `\usepackage/\RequirePackage` 和本地递归依赖收集宏包与选项，随快照传给 Worker，参与缓存；按声明或命令启用内置 mathtools/braket/upgreek/amscd/mhchem/textcomp。显式 physics 保留它的 `\qty` 语义。
+- 声明索引增加 `\sisetup`、`\DeclareSIUnit`、`\DeclareRobustCommand`、`\gdef` 和 `\DeclarePairedDelimiter`。同名文件先匹配准确路径，避免其他已打开的同名 sty 抢先；未保存缓冲区继续有效。
+- 单位别名使用真正的 `\begingroup/\endgroup` 隔离，不能用普通 `{}` 假设 MathJax 会恢复宏。用户同名字符串宏优先；`\sisetup` 尊重组作用域，公式内设置不泄漏到下一帧。
+- 数字/单位是数据参数，预览光标吸附到整个命令后，避免拆坏指数与可选参数。源码及真实光标不改写。
+- 真实回归：本轮新增 35 项，相关 55 项通过；合并工作目录共 30 files / 319 tests，typecheck、coverage、build、benchmark、size 均通过。核心 stmts/branch/lines `93.42%/87.64%/96.18%`。Node 26 cold p50/p95 `46.94/51.10 ms`，warm `4.50/6.86 ms`，scanner p95 `0.518 ms`，idle restart 通过。主 bundle 196,337 B；性能仅代表本次本机环境。
+- 同目录的独立 TikZ 更新被保留。本轮只负责数字、宏和宏包兼容；未启动浏览器或 Extension Host，最终视觉由用户验收。手动样例 `test/fixtures/manual/11-siunitx.tex`。
+- 边界详见 `docs/MACRO_SUPPORT.md`：高级 siunitx 舍入/单位排版/S 列按近似处理，不执行完整 CTAN、系统 TeX 搜索路径、expl3、catcode、动态依赖或条件代码。
+- 协作分工：主代理独立完成本轮修复与验证。
+- 产物：`silk-math-preview-0.1.78-macros.vsix` 1,480,126 B，SHA-256 `0f4e194791550baf1281a60f19f3070f539bb2f600dfcc78fee416cb8de22cdb`；`silk-math-preview-test-0.1.78-macros.vsix` 1,480,261 B，SHA-256 `966d48a8b048c88763e1236cfdf463a6969b0366fe87b534a959668547506c8b`。均 20 条目，包内 Worker 各完成 4 项实测，正式/测试 ID 和命令前缀正确。为避开同目录并行打包的覆盖，安装包来自独立源码快照并使用 `-macros` 文件名；扩展内部版本仍为 0.1.78。
+- 打包时修复了并行 TikZ 源码归档脚本的 ESM 八进制转义语法错误，改为按 tar 字段写 ustar 标识和版本；已实际读取校验生成的 tar.gz。
+
+## 2026-09-07 原生框选与后台 OCR（0.1.77）
+
+- 状态栏截图按钮直接启动系统区域选取：macOS `screencapture -i -s -x`，Windows 临时 WinForms 屏幕覆盖层，Linux 区域工具（Wayland slurp/grim、GNOME、KDE、scrot）。松开后自动识别，Esc 取消；移除 OCR Webview 和整屏二次裁切。
+- 原生 QuickPick 提供结果复制、插入、编辑、切换公式/智能/文字；新增 `ocr.open`、`ocr.paste`、`ocr.openImage`，图片来源支持剪贴板和 PNG/JPEG 文件。输入菜单 Ctrl+V/⌘V、编辑器图片粘贴 Provider 均接后台识别。
+- 正式通道快捷键 Ctrl+Alt+O / Ctrl+Alt+V（Mac ⌘⌥O / ⌘⌥V）；测试通道额外 Shift。测试通道 `ocr.pasteImages` 默认关闭，避免与正式通道同时处理同一次图片粘贴；菜单和显式粘贴命令始终可用。
+- 报错根因：文字和公式会话竞争同一 WASM 初始化，并交叉尝试 WebGPU/WASM。现在固定单线程 WASM，公共 ORT shim 串行创建所有会话，取消/失败/超时销毁整个 Worker，空闲 60 秒释放。Node 模块和 WASM 用 file URL，支持空格、中文、# 及 Windows 盘符。
+- 后台图片处理使用 PureImage 0.4.20 / PNG / JPEG 纯 JS，不引入随 VSIX 发布的原生模块。补平滑采样保留细笔画；透明底合成白色、深色反相、16 MP/20 MB 限制。已有 94 MiB 模型包继续复用，不需升级模型包。智能模式保留明显的短文字，避免 MFR 用数学符号改写普通短句。
+- 插入检查原文档版本，识别期间编辑过文档则让用户复制后选位置；临时截图/剪贴板文件在读取或取消后清理。取消框选不回退到其他截图工具、不弹失败。
+- 验证：27 files / 273 tests；类型、覆盖率、构建通过。核心 stmts/branch/lines `93.45%/87.53%/96.10%`。Node 26 本机预览 cold p50/p95 `45.58/48.88 ms`、warm `3.66/5.39 ms`、scanner p95 `0.365 ms`，idle restart 通过；这是本轮运行环境数字，不能当作跨机器承诺。
+- 真实 OCR：VS Code 的 Node 24.18.1 运行 5 个合成样例，分式、深色平方公式、纯文字、智能文字、JPEG 均返回正确结构/文字；公式可能保留模型推断的粗体样式。分式首轮约 1.9 s，第二条公式约 1.4 s。macOS AppKit 空剪贴板、私有剪贴板图片读取及 PNG 转换路径通过（未改动用户剪贴板）；未启动浏览器/Extension Host 做视觉自动化，也未在 Windows/Linux 实机操作框选。
+- 协作分工：本轮由主代理完成实现、回归、真实 Worker 验证和双通道打包。最终图形界面手动验收按用户要求由用户执行。
+- 产物核验：正式 `silk-math-preview-0.1.77.vsix` 1,283,347 B，SHA-256 `c4bad5a1c449512c5b116d29ef5ef5a8f07a7c5c3d811353fa8e33aa85db9edc`；测试 `silk-math-preview-test-0.1.77.vsix` 1,283,476 B，SHA-256 `37ffaa9c357fa8ac2359246113d313ad5675680cea9ca41814c16bcf9cbd6df6`。均 16 条目，无 Webview、模型、WASM、原生模块或源码/测试。正式 main 184,289 B，OCR Worker 223,351 B；工作目录 dist 已恢复正式通道并与正式 VSIX 逐字节一致。
+
 ## 2026-08-23 边写边加宏/大文件热路径（0.1.76）
 
 - 未保存 `.sty`、增量失效、公式打字不误伤上方 `\newcommand`。

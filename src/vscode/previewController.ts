@@ -33,10 +33,13 @@ import { isTablePreviewRegion, TABLE_PREVIEW_SCALE } from '../core/tablePreview'
 import type { MarkdownFenceState, MathRegion, MathScanOptions } from '../core/types';
 import { WeightedLru } from '../core/weightedLru';
 import { RenderClient, type RenderClientStats } from '../render/renderClient';
+import { containsTikz, TIKZ_ENVIRONMENTS } from '../tikz/source';
+import type { TikzService } from './tikzService';
 
 export interface PreviewDefinitionSnapshot {
   readonly fingerprint: string;
   readonly prelude: string;
+  readonly packages?: readonly string[];
   readonly commands: readonly string[];
   readonly environments: readonly string[];
   readonly limitations: readonly string[];
@@ -44,6 +47,7 @@ export interface PreviewDefinitionSnapshot {
 
 export interface PreviewDefinitionProvider {
   getSnapshot(document: vscode.TextDocument, offset?: number): Promise<PreviewDefinitionSnapshot>;
+  getTikzContext?(document: vscode.TextDocument, offset: number): Promise<string>;
   /**
    * 已经算好的快照，不做任何解析。编辑热路径用它跳过整份文档的定义解析
    * （实测 18k 字符的 .tex 每次按键要 2.5~3.9 ms），随后再后台核对一次。
@@ -132,6 +136,7 @@ function readSettings(): PreviewSettings {
 export interface PreviewPolicy {
   previewLanguage(document: vscode.TextDocument): 'latex' | 'markdown' | undefined;
   readonly onDidChange?: vscode.Event<void>;
+  tikzEnabled?(document?: vscode.TextDocument): boolean;
 }
 
 const DEFAULT_POLICY: PreviewPolicy = {
@@ -193,8 +198,8 @@ function previewThemeVariant(): PreviewThemeVariant {
 
 /** 明确不可能在 MathJax 里渲染的内容；给出人话原因比抛一个 TeX 报错有用。 */
 function unsupportedContent(source: string): string | undefined {
-  if (/\\begin\s*\{(?:tikzpicture|tikzcd|pgfpicture)\*?\}|\\tikz\b/.test(source)) {
-    return 'TikZ/PGF 图形需要完整 TeX 引擎，预览无法渲染';
+  if (/\\tikz\b/.test(source)) {
+    return '请使用 tikzpicture 环境并开启 TikZ 预览 / Use a tikzpicture environment and enable TikZ preview';
   }
   return undefined;
 }
@@ -284,12 +289,14 @@ export class PreviewController implements vscode.Disposable {
   private epoch = 0;
   private enabled = true;
   private scans = 0;
+  private lastTikzDocument: string | undefined;
 
   constructor(
     private readonly definitions: PreviewDefinitionProvider,
     workerPath: string,
     private readonly policy: PreviewPolicy = DEFAULT_POLICY,
     private readonly output?: vscode.OutputChannel,
+    private readonly tikz?: TikzService,
   ) {
     this.disposables.push(this.frameEmitter);
     this.renderClient = new RenderClient(workerPath, this.settings.rendererIdleMs);
@@ -311,7 +318,7 @@ export class PreviewController implements vscode.Disposable {
         if (editor?.document === event.document) {
           const immediate = this.previewVisible
             && this.activePreview?.editor === editor;
-          if (immediate) this.renderClient.prepare();
+          if (immediate && !this.lastTikzDocument) this.renderClient.prepare();
           this.schedule(editor, immediate ? 0 : undefined);
         }
       }),
@@ -352,6 +359,9 @@ export class PreviewController implements vscode.Disposable {
         this.svgCache.clear();
         this.enabled = this.settings.enabled;
         this.renderClient.setIdleMs(this.settings.rendererIdleMs);
+        this.tikz?.setIdleMs(this.settings.rendererIdleMs);
+        this.lastRegionHit = undefined;
+        if (!this.tikzEnabled(vscode.window.activeTextEditor?.document)) this.tikz?.cancel();
         this.schedule(vscode.window.activeTextEditor, 0);
       }),
     );
@@ -419,6 +429,7 @@ export class PreviewController implements vscode.Disposable {
       lines.push(`定义快照失败: ${error instanceof Error ? error.message : String(error)}`);
     }
     lines.push(
+      `宏包: ${(snapshot.packages ?? []).join(', ') || '无显式宏包'}`,
       `定义: 命令 ${snapshot.commands.length} 个，数学环境 ${JSON.stringify(snapshot.environments)}，prelude ${snapshot.prelude.length} 字符`,
     );
 
@@ -436,6 +447,8 @@ export class PreviewController implements vscode.Disposable {
       `      行 ${document.positionAt(region.start).line + 1}–${document.positionAt(region.end).line + 1}，${regionSource.length} 字符`,
       `      ${JSON.stringify(regionSource.slice(0, 120))}`,
     );
+    const isTikz = containsTikz(regionSource);
+    if (isTikz && !this.tikzEnabled(document)) return [...lines, 'TikZ 实时预览默认关闭；在 Silk Math 菜单中勾选 TikZ / pgfplots 实时预览。'].join('\n');
     const unsupported = unsupportedContent(regionSource);
     if (unsupported) {
       lines.push(`不支持: ${unsupported}`);
@@ -452,7 +465,7 @@ export class PreviewController implements vscode.Disposable {
         ? { recovery: { ...region.recovery, boundary: region.recovery.boundary - region.start } }
         : {}),
     };
-    const expression = recoverIncompleteTex(buildPreviewExpression(
+    const expression = isTikz ? regionSource : recoverIncompleteTex(buildPreviewExpression(
       regionSource,
       localRegion,
       offset - region.start,
@@ -462,14 +475,15 @@ export class PreviewController implements vscode.Disposable {
 
     const metrics = this.editorMetrics(document);
     const palette = themePalette();
-    const response = await this.renderClient.render({
+    const response = await (isTikz ? this.tikz! : this.renderClient).render({
       expression,
       displayMode: region.kind !== 'dollar-inline' && region.kind !== 'paren-inline',
       definitionFingerprint: snapshot.fingerprint,
-      definitionPrelude: snapshot.prelude,
+      definitionPrelude: isTikz ? await this.tikzPrelude(document, region, snapshot) : snapshot.prelude,
+      packages: snapshot.packages ?? [],
       foreground: palette.foreground,
       caretColor: palette.caret,
-      scale: isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1,
+      scale: isTikz ? this.settings.previewScale / 1.35 : isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1,
       exPx: metrics.exPx,
       markUnknownCommands: this.settings.markUnknownCommands,
     });
@@ -512,6 +526,7 @@ export class PreviewController implements vscode.Disposable {
     this.decoration.dispose();
     for (const disposable of this.disposables) disposable.dispose();
     void this.renderClient.dispose();
+    this.tikz?.dispose();
   }
 
   /**
@@ -519,8 +534,10 @@ export class PreviewController implements vscode.Disposable {
    * 读到的状态完全相同，重排只会白白作废一次在途渲染，所以直接复用。
    */
   private schedule(editor: vscode.TextEditor | undefined, delay?: number): void {
-    const wait = delay ?? this.settings.debounceMs;
-    if (this.scheduleTimer !== undefined && this.pendingEditor === editor && this.pendingWait <= wait) {
+    const tikz = editor && this.tikzEnabled(editor.document) && (this.lastTikzDocument === editor.document.uri.toString()
+      || TIKZ_ENVIRONMENTS.some((name) => name === this.lastRegionHit?.region.environment));
+    const wait = tikz ? Math.max(80, delay ?? this.settings.debounceMs) : delay ?? this.settings.debounceMs;
+    if (!tikz && this.scheduleTimer !== undefined && this.pendingEditor === editor && this.pendingWait <= wait) {
       return;
     }
     if (this.scheduleTimer) clearTimeout(this.scheduleTimer);
@@ -615,7 +632,8 @@ export class PreviewController implements vscode.Disposable {
         preliminary,
         this.mathScanOptions(document, [], preliminaryStartLine),
       ).regions;
-      if (findMathRegionAt(preliminaryRegions, documentOffset - preliminaryStart)) {
+      const preliminaryRegion = findMathRegionAt(preliminaryRegions, documentOffset - preliminaryStart);
+      if (preliminaryRegion && !containsTikz(preliminary.slice(preliminaryRegion.start, preliminaryRegion.end))) {
         // 与首次依赖解析并行，隐藏大部分 Worker 启动延迟。
         this.renderClient.prepare();
       }
@@ -663,8 +681,15 @@ export class PreviewController implements vscode.Disposable {
         ? { recovery: { ...region.recovery, boundary: region.recovery.boundary - region.start } }
         : {}),
     };
+    const isTikz = containsTikz(regionSource);
+    this.lastTikzDocument = isTikz ? document.uri.toString() : undefined;
+    if (isTikz && !this.tikzEnabled(document)) {
+      this.tikz?.cancel();
+      this.clearEditor(editor);
+      return;
+    }
     const content = mathRegionContent(regionSource, localRegion);
-    const definitionOnly = isDefinitionOnlySource(content);
+    const definitionOnly = !isTikz && isDefinitionOnlySource(content);
     if (definitionOnly && !this.settings.previewDefinitions) {
       this.clearFailureNotice();
       this.clearEditor(editor);
@@ -677,19 +702,26 @@ export class PreviewController implements vscode.Disposable {
       this.emitFrame(editor, region, { status: 'idle' });
       return;
     }
-    const built = buildPreviewExpression(
+    const built = isTikz ? regionSource : buildPreviewExpression(
       regionSource,
       localRegion,
       caretOffset - region.start,
       showCaret && !definitionOnly,
     ).expression;
-    const expression = recoverIncompleteTex(
+    const expression = isTikz ? built : recoverIncompleteTex(
       definitionOnly ? withDefinitionPreviewSample(built, content) : built,
     );
+    let prelude: string;
+    try { prelude = isTikz ? await this.tikzPrelude(document, region, snapshot) : snapshot.prelude; }
+    catch (error) {
+      if (epoch === this.epoch) this.scheduleFailureNotice(editor, region, this.editorMetrics(document), String(error));
+      return;
+    }
+    if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
     const displayMode = region.kind !== 'dollar-inline' && region.kind !== 'paren-inline';
     const palette = themePalette();
     const metrics = this.editorMetrics(document);
-    // TikZ/PGF 需要完整 TeX 引擎，MathJax 不可能渲染；直接说明原因，不再跑一趟 Worker。
+    // 行内 TikZ 简写仍提示改用完整图形环境。
     const unsupported = unsupportedContent(regionSource);
     if (unsupported) {
       this.emitFrame(editor, region, { status: 'unsupported', message: unsupported });
@@ -699,24 +731,25 @@ export class PreviewController implements vscode.Disposable {
       return;
     }
     // 表格常常比正文公式宽得多，整体缩小一档才放得下。
-    const scale = isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1;
+    const scale = isTikz ? this.settings.previewScale / 1.35 : isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1;
     const key = cacheKey(
       expression,
       displayMode,
-      snapshot.fingerprint,
-      palette.foreground,
-      palette.caret,
-      metrics.exPx,
+      isTikz ? `tikz:${prelude}` : snapshot.fingerprint,
+      isTikz ? '' : palette.foreground,
+      isTikz ? '' : palette.caret,
+      isTikz ? 0 : metrics.exPx,
       scale,
       this.settings.markUnknownCommands,
     );
     let rendered = this.svgCache.get(key);
     if (!rendered) {
-      const response = await this.renderClient.render({
+      const response = await (isTikz ? this.tikz! : this.renderClient).render({
         expression,
         displayMode,
         definitionFingerprint: snapshot.fingerprint,
-        definitionPrelude: snapshot.prelude,
+        definitionPrelude: prelude,
+        packages: snapshot.packages ?? [],
         foreground: palette.foreground,
         caretColor: palette.caret,
         scale,
@@ -742,6 +775,7 @@ export class PreviewController implements vscode.Disposable {
         return;
       }
       if (!response.ok) {
+        if (response.error === 'cancelled' || response.error === 'superseded') return;
         // 输入未完成时保留上一帧，避免闪烁；但当前公式从来没成功过就什么都看不到，
         // 用户无从判断是插件坏了还是公式里有不支持的写法，因此延迟给出可见原因。
         this.emitFrame(editor, region, { status: 'error', message: response.error });
@@ -766,6 +800,15 @@ export class PreviewController implements vscode.Disposable {
     this.applyDecoration(editor, region, rendered, metrics, key);
   }
 
+  private tikzEnabled(document?: vscode.TextDocument): boolean {
+    return this.tikz !== undefined && (this.policy.tikzEnabled?.(document)
+      ?? vscode.workspace.getConfiguration(COMMAND_NS, document?.uri).get('tikz.enabled', false));
+  }
+
+  private async tikzPrelude(document: vscode.TextDocument, region: MathRegion, snapshot: PreviewDefinitionSnapshot): Promise<string> {
+    return this.definitions.getTikzContext?.(document, region.start) ?? snapshot.prelude;
+  }
+
   /**
    * 渲染失败且当前公式还没有任何一帧时，延迟一小会儿再显示原因：
    * 边打字边渲染时失败是常态，成功帧到达就取消，因此不会闪烁。
@@ -785,9 +828,11 @@ export class PreviewController implements vscode.Disposable {
       return;
     }
     if (this.failureTimer) clearTimeout(this.failureTimer);
+    const noticeEpoch = this.epoch;
+    const noticeVersion = editor.document.version;
     this.failureTimer = setTimeout(() => {
       this.failureTimer = undefined;
-      if (editor !== vscode.window.activeTextEditor) return;
+      if (editor !== vscode.window.activeTextEditor || noticeEpoch !== this.epoch || noticeVersion !== editor.document.version) return;
       this.applyFailureNotice(editor, region, metrics, message);
     }, FAILURE_NOTICE_MS);
     this.failureTimer.unref?.();
@@ -1240,6 +1285,7 @@ export class PreviewController implements vscode.Disposable {
   }
 
   private clearEditor(editor: vscode.TextEditor): void {
+    if (this.lastTikzDocument === editor.document.uri.toString()) this.lastTikzDocument = undefined;
     this.frameEmitter.fire({ status: 'idle' });
     this.clearFailureNotice();
     editor.setDecorations(this.decoration, []);
@@ -1259,6 +1305,9 @@ export class PreviewController implements vscode.Disposable {
   }
 
   private clearAllVisible(): void {
+    this.epoch += 1;
+    this.tikz?.cancel();
+    this.lastTikzDocument = undefined;
     this.clearFailureNotice();
     for (const editor of vscode.window.visibleTextEditors) editor.setDecorations(this.decoration, []);
     this.lastDecorationSignature = undefined;
