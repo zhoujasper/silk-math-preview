@@ -7,7 +7,9 @@
 - 本轮重新运行 `npm run verify`：34 files / 373 tests，typecheck、coverage、build、benchmark、size 全部通过；核心行覆盖率 96.36%。Node 26.8.1 本机普通公式 cold p50/p95 47.55/51.43 ms、warm 3.75/5.37 ms、scanner p95 0.477 ms，idle restart 通过；未重复此前复杂图压力测试或启动图形界面。
 - 双通道重新打包均为 22 条目；默认 TikZ 关闭、命令/设置隔离、归档完整性、Worker 与构建一致、GPL 对应源码与当前文件逐字节一致均通过。原安装包保存在 `.tmp-tikz-smoke/github-sync-20260907-original-449_5v7_/`，不纳入 Git。
 - 当前正式包 2,226,136 B，SHA-256 `9a57cabdcd9c0b12ff56ced52ab0d6760c22963d54c6525f5be92d32b63fde35`；测试包 2,226,263 B，SHA-256 `241aca006ca50d3b4aad698488fbd6fb271a02ec5bcab9f38ea1d8efe27837c4`。源码换行统一导致源码归档和 VSIX 哈希变化，Worker 字节保持一致；`dist` 已恢复正式通道。
-- 沿用现有 GitHub Actions：`main` 推送后测试、构建双通道包，并发布 Marketplace / GitHub Release；远端完成状态以对应运行结果为准，不能由本地校验推断。Git 不纳入 VSIX、缓存、运行时下载或模型。
+- 发布提交 `1030d0b37476be3231f71a0db1a5c6ee65f98db6` 已推送；GitHub Actions `34108000223` 的 test / publish 均成功，远端同样 34 files / 373 tests。`0.2.1` 标签准确指向该提交，GitHub Release 已公开并补充版本说明；Marketplace 因未配置 `VSCE_PAT` 被跳过，不能宣称商店已更新。
+- 实际下载 GitHub Release 的两份包并匹配 GitHub SHA-256、ZIP、清单和默认开关：正式 2,222,698 B / `577718a71223f8e8b42e23aa6007a47f50c750fea000fed7b12a8861fbdbbffc`，测试 2,222,832 B / `68bd9aed60893623ce134964733151fd35ec7a0359d88b393d4e8350b576444e`。两包 Worker 与本机构建一致，15 份对应源码逐文件匹配发布提交。远端 CI 包与本地包的压缩文件哈希分别记录。
+- 发布后的结果仅通过文档提交回填，使用 `[skip ci]` 避免相同版本再次上传覆盖资产。Git 不纳入 VSIX、缓存、运行时下载或模型。
 
 ## 2026-09-07 TikZ 兼容修复、复杂图验证与资源优化（0.2.1）
 

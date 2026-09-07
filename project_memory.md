@@ -2,12 +2,14 @@
 
 ## 2026-09-07 GitHub 同步（0.2.1）
 
-- 用户授权更新 GitHub，沿用现有 `main` 和 0.2.1 版本，整合自远端 0.1.76 以来的 OCR、数学兼容、TikZ 与性能改进、文档及测试。主代理独立完成本地检查和提交准备，保留用户唯一 Git 作者。
+- 用户授权更新 GitHub，沿用现有 `main` 和 0.2.1 版本，整合自远端 0.1.76 以来的 OCR、数学兼容、TikZ 与性能改进、文档及测试。主代理独立完成本地检查、提交推送与发布核验，保留用户唯一 Git 作者。
 - 已刷新远端并确认基线 `2ce56337a57351753212bfe0bad616408e261c6e` 没有分叉；9 个文本文件恢复仓库原有 LF 换行，其中 4 个没有内容改动。全部实际代码修改保留。
 - 本轮 `npm run verify` 通过：34 files / 373 tests；核心 stmts/branch/lines 93.65%/87.88%/96.36%。Node 26.8.1 普通公式 cold p50/p95 47.55/51.43 ms、warm 3.75/5.37 ms、scanner p95 0.477 ms，idle restart 通过。未重复复杂 TikZ 长测，不运行浏览器或 Extension Host。
 - 重新打包并核验双通道 ID、默认开关、22 条目、归档完整性、Worker 与当前构建一致、GPL 对应源码逐文件一致；工作目录 `dist` 恢复正式版。原 VSIX 保存在 `.tmp-tikz-smoke/github-sync-20260907-original-449_5v7_/`。
 - 本轮正式 VSIX 2,226,136 B，SHA-256 `9a57cabdcd9c0b12ff56ced52ab0d6760c22963d54c6525f5be92d32b63fde35`；测试 VSIX 2,226,263 B，SHA-256 `241aca006ca50d3b4aad698488fbd6fb271a02ec5bcab9f38ea1d8efe27837c4`。源码归档随 LF 规范化更新，Worker 字节没有变化。
-- 现有 CI 会在 `main` 推送后自动测试、打包和发布 Marketplace / GitHub Release；远端是否完成需检查当次 Actions，而不是依赖本地成功记录。安装包、缓存、模型和临时验证输出不提交 Git。
+- 发布提交 `1030d0b37476be3231f71a0db1a5c6ee65f98db6` 已推送 `main`，GitHub Actions `34108000223` 的 test / publish 均成功；远端 373 项测试通过。标签 `0.2.1` 指向该提交，Release 已公开，双通道安装包和详细说明就绪。仓库没有 `VSCE_PAT`，Marketplace 步骤明确跳过，商店未同步。
+- 已实际下载并核验远端正式/测试 VSIX：分别 2,222,698 / 2,222,832 B，SHA-256 分别 `577718a71223f8e8b42e23aa6007a47f50c750fea000fed7b12a8861fbdbbffc` / `68bd9aed60893623ce134964733151fd35ec7a0359d88b393d4e8350b576444e`，与 GitHub 记录一致；ZIP/清单/默认开关通过，Worker 与本机构建一致，15 份对应源码与发布提交逐文件一致。不要混用本地包与 CI 包的压缩哈希。
+- 远端结果以单独的文档提交回填，使用 `[skip ci]` 避免重复覆盖同版本发布资产；没有代码变化，不重复渲染测试。安装包、缓存、模型和临时验证输出不提交 Git。
 
 ## 2026-09-07 TikZ 兼容修复、复杂图验证与资源优化（0.2.1）
 
