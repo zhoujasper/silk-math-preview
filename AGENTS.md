@@ -13,7 +13,10 @@
 - 按用户要求同步 GitHub 仓库，沿用 `main` 和 0.2.8，将 0.2.1 之后的预览 CSS、分屏定位、菜单失焦、即时清除、OCR 改进、测试及多语言文档一起纳入；主代理独立完成，保留用户唯一 Git 作者，不添加共同作者。
 - 推送前确认本地基线与远端 `main` 均为 `3d8f9e7b79660255b00cab51e32467c36af9439c`，远端尚无 0.2.8 标签。完整 `npm run verify` 通过：40 files / 538 tests、typecheck、coverage、build、benchmark、size；核心行覆盖率 96.60%，91 个版本的双语 CHANGELOG 提取检查通过。
 - 本轮 Node 26.8.1 普通公式 cold p50/p95 48.15/52.05 ms、warm 3.76/5.27 ms，scanner p95 0.488 ms，空闲重启通过；主 bundle 201,415 B。现有两份 0.2.8 VSIX 哈希未改变，共享 Worker 与当前构建、15 份 GPL 对应源码一致，正式包的主模块及两个 CSS 模块亦一致。未启动浏览器或 Extension Host。
-- 发布流程继续从对应 CHANGELOG 提取完整中英双语说明；README 保留全部 11 种语言。远端 CI、标签与下载资产的最终结果将在完成后回填；仓库当前没有 `VSCE_PAT`，Marketplace 与 GitHub Release 分别核验。
+- 发布提交 `fab2fbe46e22985cb5e1de5b975130d64402814b` 已推送；GitHub Actions `34305263405` 的 test / publish 均成功，远端同样 40 files / 538 tests。`0.2.8` 标签准确指向发布提交；公开 Release 的完整中英说明与当前 CHANGELOG 逐字一致，README 保留全部 11 种语言。
+- 实际下载并校验 GitHub Release 两份包：正式 2,274,392 B / SHA-256 `5f15050c9c2c3ec5a320c72a4411f9a2188fed95fe717e8317ddd7abf0b533f0`；测试 2,274,531 B / `1b67f766d2a7bded077a7746ccd17cd0f4f49923ac3e8ef5346f535b4ac1e3b6`，均匹配 GitHub digest。
+- 两包各 24 条目，ZIP、版本、命名空间、默认 TikZ 关闭、说明和构建一致；15 份 GPL 对应源码逐文件匹配发布提交。与既有本地包相比，只有源码归档的 gzip 字节不同，解压后的 tar 完全一致，其余 23 条目逐字节相同；正式下载哈希与本地包哈希分别记录，不混用。
+- Marketplace 因未配置 `VSCE_PAT` 被跳过，未更新商店。保留既有本地 VSIX 与正式通道 dist；发布结果通过只改本文件及项目记忆的 `[skip ci]` 提交回填，避免重复覆盖同版本资产。验证日志与下载回执保存在 `/tmp/silk-github-0.2.8-s5WNuQ/`，不进入 Git。
 
 ## 2026-09-09 离开公式立即清除预览（0.2.8）
 
