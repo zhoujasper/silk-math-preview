@@ -12,14 +12,18 @@ import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
 import { recoverIncompleteTex } from '../core/incompleteTex';
 import { advanceMarkdownFenceState, findMathRegionAt, mathRegionContent, regionContainsOffset, scanMathRegions, selectionOverlapsRegion } from '../core/mathScanner';
 import { buildPreviewExpression } from '../core/previewExpression';
-import { decidePreviewSelection, shouldRetainLastPreviewFrame, type SelectionChangeKind } from '../core/previewSelection';
+import { decidePreviewSelection, shouldRetainLastPreviewFrame } from '../core/previewSelection';
 import {
   floatingPreviewLayout,
-  MONO_CHAR_WIDTH_RATIO,
   notebookPreviewSpacerCss,
   notebookPreviewSpacerPx,
+  previewPanelInsets,
   resolveEditorMetrics,
-  previewOverlayOccupiedLines,
+  previewViewportAnchorCss,
+  parsePreviewCss,
+  hasAdvancedPreviewCss,
+  previewFontScale,
+  PreviewSourceAnchors,
   resolvePreviewAnchor,
   resolvePreviewHorizontalLayout,
   resolvePreviewPlacement,
@@ -28,7 +32,8 @@ import {
   type EditorMetrics,
   type PreviewPlacement,
   type PreviewThemeVariant,
-} from '../core/previewLayout';
+} from './preview-style';
+import type { PreviewCss } from '../core/previewCss';
 import { isTablePreviewRegion, TABLE_PREVIEW_SCALE } from '../core/tablePreview';
 import type { MarkdownFenceState, MathRegion, MathScanOptions } from '../core/types';
 import { WeightedLru } from '../core/weightedLru';
@@ -99,6 +104,7 @@ const SVG_CACHE_ENTRIES = 64;
 const DEFINITION_REFRESH_MS = 180;
 /** 渲染失败多久之后才把原因显示出来；打字途中的瞬时失败不会走到这里。 */
 const FAILURE_NOTICE_MS = 400;
+const VIEWPORT_ANCHOR = `--${COMMAND_NS}-preview-viewport`;
 
 interface PreviewSettings {
   readonly enabled: boolean;
@@ -112,11 +118,15 @@ interface PreviewSettings {
   readonly markUnknownCommands: boolean;
   readonly previewDefinitions: boolean;
   readonly trace: boolean;
+  readonly previewCss: PreviewCss;
 }
 
 /** 配置在每次按键的热路径上要读五六次，缓存下来，只在配置变更时重读。 */
 function readSettings(): PreviewSettings {
   const config = vscode.workspace.getConfiguration(COMMAND_NS);
+  let previewCss = parsePreviewCss('');
+  try { previewCss = parsePreviewCss(config.get<string>('previewCss', '')); }
+  catch (error) { void vscode.window.showWarningMessage(`${PRODUCT_NAME} CSS: ${String(error)}`); }
   return {
     enabled: config.get('enabled', true),
     debounceMs: config.get('debounceMs', 8),
@@ -129,6 +139,7 @@ function readSettings(): PreviewSettings {
     markUnknownCommands: config.get('markUnknownCommands', true),
     previewDefinitions: config.get('previewDefinitions', false),
     trace: config.get('trace', false),
+    previewCss,
   };
 }
 
@@ -171,13 +182,6 @@ function percentile(values: readonly number[], ratio: number): number {
   if (values.length === 0) return 0;
   const ordered = [...values].sort((left, right) => left - right);
   return ordered[Math.min(ordered.length - 1, Math.floor((ordered.length - 1) * ratio))] ?? 0;
-}
-
-function selectionChangeKind(kind: vscode.TextEditorSelectionChangeKind | undefined): SelectionChangeKind {
-  if (kind === vscode.TextEditorSelectionChangeKind.Mouse) return 'mouse';
-  if (kind === vscode.TextEditorSelectionChangeKind.Keyboard) return 'keyboard';
-  if (kind === vscode.TextEditorSelectionChangeKind.Command) return 'command';
-  return 'unknown';
 }
 
 function themePalette(): { readonly foreground: string; readonly caret: string } {
@@ -250,10 +254,11 @@ function cacheKey(
 export class PreviewController implements vscode.Disposable {
   private readonly decoration = vscode.window.createTextEditorDecorationType({
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-    // 为绝对定位的 before 伪元素提供局部锚点；不会改变源码行的尺寸。
-    textDecoration: 'none; position: relative',
+    // 只命名当前 decoration 所在的内容视口；不把整个源码 token 变成定位容器。
+    textDecoration: previewViewportAnchorCss(),
   });
   private readonly renderClient: RenderClient;
+  private readonly sourceAnchors = new PreviewSourceAnchors();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly svgCache = new WeightedLru<CachedSvg>(SVG_CACHE_ENTRIES, SVG_CACHE_BYTES);
   private readonly markdownFenceCaches = new Map<string, MarkdownFenceCache>();
@@ -268,14 +273,13 @@ export class PreviewController implements vscode.Disposable {
   private failureTimer: NodeJS.Timeout | undefined;
   private metricsCache: { readonly key: string; readonly metrics: EditorMetrics } | undefined;
   private lastDecorationSignature: string | undefined;
+  private appearanceVersion = 0;
   private lastPaint: {
     readonly editor: vscode.TextEditor;
     readonly region: MathRegion;
     readonly rendered: CachedSvg;
     readonly metrics: EditorMetrics;
     readonly renderKey: string;
-    readonly overlayStartLine: number;
-    readonly overlayEndLine: number;
   } | undefined;
   /** 同一文档版本里光标还在上次公式内就不必再扫一遍。 */
   private lastRegionHit: {
@@ -354,7 +358,14 @@ export class PreviewController implements vscode.Disposable {
           this.schedule(vscode.window.activeTextEditor, 0);
         }
         if (!event.affectsConfiguration(COMMAND_NS)) return;
+        const cssOnly = event.affectsConfiguration(`${COMMAND_NS}.previewCss`)
+          && Object.keys(this.settings).every((key) => key === 'previewCss' || !event.affectsConfiguration(`${COMMAND_NS}.${key}`));
         this.settings = readSettings();
+        this.appearanceVersion += 1;
+        if (cssOnly) {
+          if (this.lastPaint) this.repositionPaint(this.lastPaint.editor);
+          return;
+        }
         this.metricsCache = undefined;
         this.svgCache.clear();
         this.enabled = this.settings.enabled;
@@ -382,12 +393,6 @@ export class PreviewController implements vscode.Disposable {
 
   /** 只关闭当前浮层；下一次移动光标或继续编辑时仍可正常重新显示。 */
   dismiss(): void {
-    if (this.scheduleTimer) {
-      clearTimeout(this.scheduleTimer);
-      this.scheduleTimer = undefined;
-      this.pendingEditor = undefined;
-    }
-    this.epoch += 1;
     this.clearAllVisible();
   }
 
@@ -566,40 +571,21 @@ export class PreviewController implements vscode.Disposable {
 
   private handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent): void {
     const editor = event.textEditor;
-    if (this.activePreview !== undefined && this.activePreview.editor !== editor) {
-      this.clearAllVisible();
-    }
-    const offset = editor.document.offsetAt(editor.selection.active);
+    // 后台分屏中的程序化选区变化不能清掉当前编辑器的预览。
+    if (editor !== vscode.window.activeTextEditor) return;
+    if (this.activePreview !== undefined && this.activePreview.editor !== editor) this.clearAllVisible();
     const current = this.activePreview?.editor === editor ? this.activePreview.region : undefined;
-    const hit = current && regionContainsOffset(current, offset)
-      ? current
-      : this.peekRegionAt(editor, offset);
-    const overlay = this.lastPaint?.editor === editor
-      ? { startLine: this.lastPaint.overlayStartLine, endLine: this.lastPaint.overlayEndLine }
-      : undefined;
-    const action = decidePreviewSelection({
-      kind: selectionChangeKind(event.kind),
-      offset,
-      offsetLine: editor.selection.active.line,
-      ...(current ? { currentRegion: current } : {}),
-      ...(hit ? { hitRegion: hit } : {}),
-      ...(overlay ? { overlay } : {}),
-    });
-    if (action === 'keep-without-clear') return;
-    if (action === 'clear') this.clearAllVisible();
+    const hit = this.locateFormula(editor, this.definitions.peekSnapshot?.(editor.document) ?? {
+      fingerprint: '', prelude: '', commands: [], environments: [], limitations: [],
+    }, false)?.region;
+    const action = decidePreviewSelection({ ...(current ? { currentRegion: current } : {}), ...(hit ? { hitRegion: hit } : {}) });
+    if (action === 'clear') {
+      // 同一事件中移除图片和锚点，并取消排队任务；不再等第二次点击或编辑。
+      this.dismiss();
+      return;
+    }
+    if (action === 'switch-region' && current) this.clearAllVisible();
     this.schedule(editor, 0);
-  }
-
-  /** 点选热路径只做有界扫描，不必等定义快照。未命中时不要清掉当前公式的缓存命中。 */
-  private peekRegionAt(editor: vscode.TextEditor, offset: number): MathRegion | undefined {
-    const snapshot = this.definitions.peekSnapshot?.(editor.document);
-    return this.findCurrentRegion(editor.document, offset, snapshot ?? {
-      fingerprint: '',
-      prelude: '',
-      commands: [],
-      environments: [],
-      limitations: [],
-    }, false);
   }
 
   /** 只挪 decoration 锚点，不重新渲染。滚动时公式首行出视口，浮层必须跟到仍可见的那一行。 */
@@ -855,6 +841,8 @@ export class PreviewController implements vscode.Disposable {
     metrics: EditorMetrics,
     message: string,
   ): void {
+    this.sourceAnchors.clear();
+    this.lastPaint = undefined;
     const startLine = editor.document.positionAt(region.start).line;
     const endLine = editor.document.positionAt(region.end).line;
     const visible = visibleLineSpan(editor);
@@ -877,7 +865,7 @@ export class PreviewController implements vscode.Disposable {
       startColumn: columns.start,
       endColumn: columns.end,
       fontSizePx: metrics.fontSizePx,
-      viewportWidthPx: this.estimateViewportWidthPx(editor, metrics),
+      viewportWidthPx: 0,
     });
     const notebook = isNotebookCellDocument(editor.document);
     const spacerPx = notebook && placement === 'below'
@@ -895,6 +883,9 @@ export class PreviewController implements vscode.Disposable {
       boxHeightPx: horizontal.boxHeightPx,
       overflowX: horizontal.overflowX,
       overflowY: horizontal.overflowY,
+      viewportAnchor: VIEWPORT_ANCHOR,
+      customCss: this.settings.previewCss,
+      image: false,
     });
     const range = this.previewDecorationRange(editor, region, anchor.anchorLine);
     editor.setDecorations(this.decoration, [{
@@ -905,6 +896,8 @@ export class PreviewController implements vscode.Disposable {
           color: new vscode.ThemeColor('editorWarning.foreground'),
           backgroundColor: new vscode.ThemeColor('editorHoverWidget.background'),
           textDecoration: layout.textDecoration,
+          width: layout.width,
+          height: layout.height,
         },
         ...(spacerPx > 0
           ? {
@@ -935,13 +928,14 @@ export class PreviewController implements vscode.Disposable {
     delay = DEFINITION_REFRESH_MS,
   ): void {
     if (this.definitionRefreshTimer) clearTimeout(this.definitionRefreshTimer);
+    const refreshEpoch = this.epoch;
     this.definitionRefreshTimer = setTimeout(() => {
       this.definitionRefreshTimer = undefined;
-      if (editor !== vscode.window.activeTextEditor) return;
+      if (editor !== vscode.window.activeTextEditor || refreshEpoch !== this.epoch) return;
       void this.definitions
         .getSnapshot(editor.document, editor.document.offsetAt(editor.selection.active))
         .then((fresh) => {
-          if (fresh.fingerprint !== usedFingerprint && editor === vscode.window.activeTextEditor) {
+          if (fresh.fingerprint !== usedFingerprint && editor === vscode.window.activeTextEditor && refreshEpoch === this.epoch) {
             this.schedule(editor, 0);
           }
         })
@@ -971,11 +965,13 @@ export class PreviewController implements vscode.Disposable {
   private locateFormula(
     editor: vscode.TextEditor,
     snapshot: PreviewDefinitionSnapshot,
+    rememberMiss = true,
   ): { readonly offset: number; readonly region: MathRegion } | undefined {
     const document = editor.document;
     const seen = new Set<number>();
     const candidates = [
       document.offsetAt(editor.selection.active),
+      this.preferredFormulaOffset(editor),
       document.offsetAt(editor.selection.anchor),
       document.offsetAt(editor.selection.start),
       document.offsetAt(editor.selection.end),
@@ -983,7 +979,7 @@ export class PreviewController implements vscode.Disposable {
     for (const offset of candidates) {
       if (seen.has(offset)) continue;
       seen.add(offset);
-      const region = this.findCurrentRegion(document, offset, snapshot);
+      const region = this.findCurrentRegion(document, offset, snapshot, rememberMiss);
       if (region) return { offset, region };
     }
     return undefined;
@@ -1118,10 +1114,27 @@ export class PreviewController implements vscode.Disposable {
     renderKey: string,
   ): void {
     const themeVariant = previewThemeVariant();
+    const css = hasAdvancedPreviewCss(this.settings.previewCss)
+      ? this.settings.previewCss : { ...this.settings.previewCss, allowOverlap: true };
+    const nominalFont = this.lastTikzDocument === editor.document.uri.toString()
+      ? 16 * this.settings.previewScale / 1.35
+      : metrics.exPx * 2 * (isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1);
+    const fontScale = previewFontScale(css, nominalFont);
+    const widthPx = rendered.widthPx * fontScale;
+    const heightPx = rendered.heightPx * fontScale;
     const startLine = editor.document.positionAt(region.start).line;
     const endLine = editor.document.positionAt(region.end).line;
     const visible = visibleLineSpan(editor);
-    const placement = this.previewPlacement(editor, startLine, endLine, rendered.heightPx, metrics);
+    if (endLine < visible.start || startLine > visible.end) {
+      // 全部公式滚出视口时不能把锚点夹到无关源码行。保留上一帧供滚回时复用。
+      this.sourceAnchors.clear(editor);
+      editor.setDecorations(this.decoration, []);
+      this.lastDecorationSignature = undefined;
+      return;
+    }
+    const preferred = this.previewPlacement(editor, startLine, endLine, heightPx, metrics);
+    const geometry = this.sourceAnchors.plan(editor, region, css, preferred);
+    const placement = geometry?.placement ?? preferred;
     const anchor = resolvePreviewAnchor({
       formulaStartLine: startLine,
       formulaEndLine: endLine,
@@ -1139,25 +1152,28 @@ export class PreviewController implements vscode.Disposable {
       ? 0
       : Math.max(metrics.lineHeightPx * 6, Math.round(visibleHeightPx * 0.5));
     const horizontal = resolvePreviewHorizontalLayout({
-      previewWidthPx: rendered.widthPx,
-      previewHeightPx: rendered.heightPx,
+      previewWidthPx: widthPx,
+      previewHeightPx: heightPx,
       startColumn: columns.start,
       endColumn: columns.end,
       fontSizePx: metrics.fontSizePx,
-      viewportWidthPx: this.estimateViewportWidthPx(editor, metrics),
+      // VS Code API 不暴露水平像素视口；限位交给 CSS anchor，不用 120 列假装窗口宽度。
+      viewportWidthPx: 0,
       maxHeightPx,
     });
+    const gapPx = (css.gap?.value ?? 0) * (css.gap?.unit === 'lh' ? metrics.lineHeightPx : 1);
+    const outerHeight = horizontal.boxHeightPx + previewPanelInsets(css, themeVariant).vertical;
     const spacerPx = notebook && placement === 'below'
-      ? notebookPreviewSpacerPx(horizontal.boxHeightPx, metrics.lineHeightPx)
+      ? notebookPreviewSpacerPx(outerHeight + gapPx + Math.max(0, css.offsetY), metrics.lineHeightPx)
       : 0;
-    const signature = `${renderKey}|${region.start}|${region.end}|${anchor.anchorLine}|${formulaStart.character}|${horizontal.leftPx}|${horizontal.boxWidthPx}|${themeVariant}|${placement}|s${spacerPx}`;
+    const signature = `${renderKey}|${region.start}|${region.end}|${anchor.anchorLine}|${formulaStart.character}|${horizontal.leftPx}|${horizontal.boxWidthPx}|${horizontal.boxHeightPx}|${themeVariant}|${placement}|s${spacerPx}|css${this.appearanceVersion}|${geometry?.signature ?? ''}`;
     if (signature === this.lastDecorationSignature && this.activePreview?.editor === editor) {
       // 内容和位置都没变，重设 decoration 只会让 VS Code 重新解码一次 SVG。
       return;
     }
     const layout = floatingPreviewLayout({
-      widthPx: rendered.widthPx,
-      heightPx: rendered.heightPx,
+      widthPx,
+      heightPx,
       lineHeightPx: metrics.lineHeightPx,
       lineSpan: anchor.lineSpan,
       placement,
@@ -1167,7 +1183,11 @@ export class PreviewController implements vscode.Disposable {
       boxHeightPx: horizontal.boxHeightPx,
       overflowX: horizontal.overflowX,
       overflowY: horizontal.overflowY,
+      viewportAnchor: VIEWPORT_ANCHOR,
+      customCss: css,
+      ...(geometry ? { geometry: geometry.geometry, imageUri: rendered.uri.toString(true) } : {}),
     });
+    this.sourceAnchors.show(editor, geometry, layout);
     const attachment: vscode.ThemableDecorationAttachmentRenderOptions = {
       contentIconPath: rendered.uri,
       width: layout.width,
@@ -1181,9 +1201,12 @@ export class PreviewController implements vscode.Disposable {
           borderColor: new vscode.ThemeColor('contrastBorder'),
         }
         : {}),
-      textDecoration: layout.textDecoration,
+      // 实际图片由 overflow-guard 覆盖层绘制，此附件只保留原生行占位兼容性。
+      textDecoration: `${layout.textDecoration}; display: none !important`,
     };
-    const range = this.previewDecorationRange(editor, region, anchor.anchorLine);
+    const range = geometry
+      ? new vscode.Range(geometry.range.start, formulaEnd.isBeforeOrEqual(geometry.range.start) ? geometry.range.end : formulaEnd)
+      : this.previewDecorationRange(editor, region, anchor.anchorLine);
     const spacer = spacerPx > 0
       ? {
         after: {
@@ -1202,22 +1225,12 @@ export class PreviewController implements vscode.Disposable {
       renderOptions: { before: attachment, ...spacer },
     }]);
     this.lastDecorationSignature = signature;
-    const overlay = previewOverlayOccupiedLines({
-      formulaStartLine: startLine,
-      formulaEndLine: endLine,
-      anchorLine: anchor.anchorLine,
-      placement,
-      previewHeightPx: horizontal.boxHeightPx,
-      lineHeightPx: metrics.lineHeightPx,
-    });
     this.lastPaint = {
       editor,
       region,
       rendered,
       metrics,
       renderKey,
-      overlayStartLine: overlay.start,
-      overlayEndLine: overlay.end,
     };
     this.activePreview = { editor, region };
     this.setPreviewVisible(true);
@@ -1259,17 +1272,6 @@ export class PreviewController implements vscode.Disposable {
     return { start, end: Math.max(start, end) };
   }
 
-  private estimateViewportWidthPx(editor: vscode.TextEditor, metrics: EditorMetrics): number {
-    const config = vscode.workspace.getConfiguration('editor', editor.document);
-    const wrap = config.get<string>('wordWrap', 'off');
-    const wrapColumn = config.get<number>('wordWrapColumn', 80);
-    const charWidth = metrics.fontSizePx * MONO_CHAR_WIDTH_RATIO;
-    if (wrap === 'wordWrapColumn' || wrap === 'bounded') {
-      return Math.max(240, Math.round(Math.max(1, wrapColumn) * charWidth));
-    }
-    return Math.max(480, Math.round(120 * charWidth));
-  }
-
   private emitFrame(
     editor: vscode.TextEditor,
     region: MathRegion | undefined,
@@ -1289,6 +1291,7 @@ export class PreviewController implements vscode.Disposable {
     this.frameEmitter.fire({ status: 'idle' });
     this.clearFailureNotice();
     editor.setDecorations(this.decoration, []);
+    this.sourceAnchors.clear(editor);
     this.lastDecorationSignature = undefined;
     if (this.lastPaint?.editor === editor) this.lastPaint = undefined;
     if (this.lastRegionHit?.uri === editor.document.uri.toString()) this.lastRegionHit = undefined;
@@ -1305,15 +1308,22 @@ export class PreviewController implements vscode.Disposable {
   }
 
   private clearAllVisible(): void {
+    if (this.scheduleTimer) clearTimeout(this.scheduleTimer);
+    this.scheduleTimer = undefined;
+    this.pendingEditor = undefined;
+    if (this.definitionRefreshTimer) clearTimeout(this.definitionRefreshTimer);
+    this.definitionRefreshTimer = undefined;
     this.epoch += 1;
     this.tikz?.cancel();
     this.lastTikzDocument = undefined;
     this.clearFailureNotice();
+    this.sourceAnchors.clear();
     for (const editor of vscode.window.visibleTextEditors) editor.setDecorations(this.decoration, []);
     this.lastDecorationSignature = undefined;
     this.lastPaint = undefined;
     this.lastRegionHit = undefined;
     this.activePreview = undefined;
     this.setPreviewVisible(false);
+    this.frameEmitter.fire({ status: 'idle' });
   }
 }

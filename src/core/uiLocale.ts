@@ -57,6 +57,7 @@ export interface OcrUiCopy {
 export interface UiCopy {
   readonly htmlLang: string;
   readonly previewSize: string;
+  readonly editPreviewCss: string;
   readonly reset: string;
   readonly shrink: string;
   readonly grow: string;
@@ -173,6 +174,7 @@ const EN_OCR: OcrUiCopy = {
 const EN: UiCopy = {
   htmlLang: 'en',
   previewSize: 'Preview size',
+  editPreviewCss: "Edit preview CSS…",
   reset: 'Reset',
   shrink: 'Shrink 5%',
   grow: 'Grow 5%',
@@ -223,6 +225,7 @@ const EN: UiCopy = {
 const ZH_HANS: UiCopy = {
   htmlLang: 'zh-CN',
   previewSize: '预览大小',
+  editPreviewCss: "编辑预览 CSS…",
   reset: '重置',
   shrink: '缩小 5%',
   grow: '放大 5%',
@@ -296,6 +299,7 @@ const ZH_HANS: UiCopy = {
 const ZH_HANT: UiCopy = {
   htmlLang: 'zh-TW',
   previewSize: '預覽大小',
+  editPreviewCss: "編輯預覽 CSS…",
   reset: '重設',
   shrink: '縮小 5%',
   grow: '放大 5%',
@@ -369,6 +373,7 @@ const ZH_HANT: UiCopy = {
 const JA: UiCopy = {
   htmlLang: 'ja',
   previewSize: 'プレビューサイズ',
+  editPreviewCss: "プレビュー CSS を編集…",
   reset: 'リセット',
   shrink: '5% 縮小',
   grow: '5% 拡大',
@@ -442,6 +447,7 @@ const JA: UiCopy = {
 const KO: UiCopy = {
   htmlLang: 'ko',
   previewSize: '미리보기 크기',
+  editPreviewCss: "미리 보기 CSS 편집…",
   reset: '재설정',
   shrink: '5% 축소',
   grow: '5% 확대',
@@ -515,6 +521,7 @@ const KO: UiCopy = {
 const DE: UiCopy = {
   htmlLang: 'de',
   previewSize: 'Vorschaugröße',
+  editPreviewCss: "Vorschau-CSS bearbeiten…",
   reset: 'Zurücksetzen',
   shrink: '5 % verkleinern',
   grow: '5 % vergrößern',
@@ -588,6 +595,7 @@ const DE: UiCopy = {
 const FR: UiCopy = {
   htmlLang: 'fr',
   previewSize: 'Taille de l’aperçu',
+  editPreviewCss: "Modifier le CSS de l’aperçu…",
   reset: 'Réinitialiser',
   shrink: 'Réduire de 5 %',
   grow: 'Agrandir de 5 %',
@@ -661,6 +669,7 @@ const FR: UiCopy = {
 const ES: UiCopy = {
   htmlLang: 'es',
   previewSize: 'Tamaño de la vista previa',
+  editPreviewCss: "Editar CSS de la vista previa…",
   reset: 'Restablecer',
   shrink: 'Reducir 5 %',
   grow: 'Aumentar 5 %',
@@ -734,6 +743,7 @@ const ES: UiCopy = {
 const PT: UiCopy = {
   htmlLang: 'pt-BR',
   previewSize: 'Tamanho da pré-visualização',
+  editPreviewCss: "Editar CSS da prévia…",
   reset: 'Redefinir',
   shrink: 'Reduzir 5%',
   grow: 'Aumentar 5%',
@@ -807,6 +817,7 @@ const PT: UiCopy = {
 const RU: UiCopy = {
   htmlLang: 'ru',
   previewSize: 'Размер предпросмотра',
+  editPreviewCss: "Изменить CSS предпросмотра…",
   reset: 'Сбросить',
   shrink: 'Уменьшить на 5%',
   grow: 'Увеличить на 5%',
@@ -880,6 +891,7 @@ const RU: UiCopy = {
 const IT: UiCopy = {
   htmlLang: 'it',
   previewSize: 'Dimensione anteprima',
+  editPreviewCss: "Modifica CSS anteprima…",
   reset: 'Reimposta',
   shrink: 'Riduci del 5%',
   grow: 'Ingrandisci del 5%',

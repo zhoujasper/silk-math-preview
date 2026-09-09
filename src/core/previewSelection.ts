@@ -1,14 +1,10 @@
 /**
- * 鼠标点选与失败帧策略。预览控制器和测试走同一份判断：
- * 光标落在公式里就更新；浮层盖住的非公式行（滚动条）才保持。
+ * 选区与失败帧策略：只以源码公式命中为准，所有输入方式行为一致。
  */
-
-export type SelectionChangeKind = 'mouse' | 'keyboard' | 'command' | 'unknown';
 
 export type PreviewSelectionAction =
   | 'update-at-offset'
   | 'switch-region'
-  | 'keep-without-clear'
   | 'clear';
 
 export interface RegionSpan {
@@ -16,41 +12,22 @@ export interface RegionSpan {
   readonly end: number;
 }
 
-export interface OverlayLines {
-  readonly startLine: number;
-  readonly endLine: number;
-}
-
 export interface PreviewSelectionInput {
-  readonly kind: SelectionChangeKind;
-  readonly offset: number;
-  readonly offsetLine: number;
   readonly currentRegion?: RegionSpan;
   readonly hitRegion?: RegionSpan;
-  readonly overlay?: OverlayLines;
 }
 
 function sameRegion(left: RegionSpan, right: RegionSpan): boolean {
   return left.start === right.start && left.end === right.end;
 }
 
-function overlayContains(overlay: OverlayLines | undefined, line: number): boolean {
-  return overlay !== undefined && line >= overlay.startLine && line <= overlay.endLine;
-}
-
-/**
- * 文档 offset 落在哪条公式优先于浮层占用行。
- * 只有鼠标点在浮层盖住、且那里没有公式的行上，才保持当前预览。
- */
+/** 预览不接收鼠标事件；落到它下面的非公式源码也是离开公式。 */
 export function decidePreviewSelection(input: PreviewSelectionInput): PreviewSelectionAction {
   if (input.hitRegion) {
     if (input.currentRegion && sameRegion(input.hitRegion, input.currentRegion)) {
       return 'update-at-offset';
     }
     return 'switch-region';
-  }
-  if (input.kind === 'mouse' && overlayContains(input.overlay, input.offsetLine)) {
-    return 'keep-without-clear';
   }
   return 'clear';
 }

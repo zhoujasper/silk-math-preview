@@ -37,6 +37,24 @@ npm run package           # 先跑 verify，再打上面两个
 
 ## 自动发布（GitHub Actions）
 
+每个新版本必须先在 `CHANGELOG.md` 中填写对应版本的完整中英双语说明，固定先 `### 中文`、后 `### English`，两侧更新项一一对应，版本标题与 `package.json` 一致：
+
+```markdown
+## <version> - YYYY-MM-DD
+
+### 中文
+
+- 中文更新说明。
+
+### English
+
+- English release note.
+```
+
+`node scripts/release-notes.mjs` 检查并输出当前版本的双语说明；也可传入版本号检查历史记录。CI 在测试和发布前检查版本与双语条目，GitHub Release 的创建和更新都使用这份说明。不要改回自动生成的单语提交摘要。发布前仍需人工核对两种语言的含义一致。
+
+`README.md` 继续维护现有 11 种语言（英文、简体中文、繁體中文、日本語、한국어、Deutsch、Français、Español、Português、Русский、Italiano），保留单文件与页内语言导航。
+
 1. 先有 Azure DevOps 组织：打开 https://dev.azure.com 登录，按提示 **Create new organization**（名字随意，例如 `zhoujasper`）。
 2. 右上角头像旁齿轮 / 用户菜单 → **Personal access tokens** → **New Token**：
    - Name：`vscode-marketplace`

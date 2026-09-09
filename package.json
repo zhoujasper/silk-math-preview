@@ -2,7 +2,7 @@
   "name": "silk-math-preview",
   "displayName": "Silk Math Preview",
   "description": "Live math preview that follows your caret. Inline LaTeX, Markdown, Jupyter, and MathJax equations with no compile step. 光标走到哪，公式就在哪渲染。",
-  "version": "0.2.1",
+  "version": "0.2.8",
   "publisher": "silkmath",
   "author": {
     "name": "Jasper Zhou",
@@ -24,7 +24,7 @@
   },
   "homepage": "https://zhoujasper.github.io",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "Visualization",
@@ -181,6 +181,10 @@
       {
         "command": "silkMath.toggleTikz",
         "title": "Silk Math: 切换 TikZ 图片预览 / Toggle TikZ Preview"
+      },
+      {
+        "command": "silkMath.editPreviewCss",
+        "title": "Silk Math: 编辑预览 CSS / Edit Preview CSS"
       }
     ],
     "keybindings": [
@@ -334,6 +338,14 @@
           "type": "boolean",
           "default": false,
           "description": "启用 TikZ / pgfplots 实时图片预览。默认关闭；首次使用下载本地 WebAssembly 渲染组件，之后离线运行，无需安装 LaTeX。Enable live TikZ / pgfplots image preview. Off by default; downloads the local WebAssembly renderer once, then works offline without a LaTeX installation."
+        },
+        "silkMath.previewCss": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "maxLength": 8192,
+          "editPresentation": "multilineText",
+          "markdownDescription": "预览 CSS：Silk Math → 编辑预览 CSS，保存生效；支持光标/选区/公式定位、上下/右侧、行间隔、字号、偏移、防覆盖与外观，清空恢复默认。Preview CSS: anchor to caret, selection or formula; choose above/below/right, line gaps, font size, offsets, overlap and appearance. Save to apply; clear to reset."
         }
       }
     }
@@ -347,6 +359,7 @@
     "coverage": "vitest run --coverage",
     "benchmark": "node scripts/benchmark.mjs",
     "validate:ocr-pack": "node scripts/validate-ocr-pack.mjs",
+    "validate:ocr-accuracy": "node scripts/validate-ocr-accuracy.mjs",
     "check:size": "node scripts/check-size.mjs",
     "verify": "npm run typecheck && npm run coverage && npm run build && npm run benchmark && npm run check:size",
     "package:release": "node scripts/package-channel.mjs release",

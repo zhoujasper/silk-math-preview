@@ -5,7 +5,6 @@ import {
   notebookPreviewSpacerCss,
   notebookPreviewSpacerPx,
   normalizePreviewPlacement,
-  previewOverlayOccupiedLines,
   resolveEditorMetrics,
   resolvePreviewAnchor,
   resolvePreviewHorizontalLayout,
@@ -107,8 +106,8 @@ describe('floatingPreviewLayout', () => {
     });
     expect(layout.textDecoration).toContain('position: absolute');
     expect(layout.textDecoration).toContain('top: 21px');
-    expect(layout.textDecoration).toContain('padding: 0.06em 0.12em');
-    expect(layout.textDecoration).toContain('border-radius: 8px');
+    expect(layout.textDecoration).toContain('padding: 4px 8px');
+    expect(layout.textDecoration).toContain('border-radius: 6px');
     expect(layout.textDecoration).toContain('rgba(15, 23, 42, 0.22)');
     expect(layout.textDecoration).toContain('overflow-x: visible');
     expect(layout.textDecoration).toContain('left: 0px');
@@ -282,22 +281,5 @@ describe('preview horizontal layout', () => {
     expect(full.overflowY).toBe('hidden');
   });
 
-  it('浮层盖住的源码行包含公式下方滚动条所在的行', () => {
-    expect(previewOverlayOccupiedLines({
-      formulaStartLine: 5,
-      formulaEndLine: 12,
-      anchorLine: 12,
-      placement: 'below',
-      previewHeightPx: 95,
-      lineHeightPx: 19,
-    })).toEqual({ start: 5, end: 18 });
-    expect(previewOverlayOccupiedLines({
-      formulaStartLine: 10,
-      formulaEndLine: 10,
-      anchorLine: 10,
-      placement: 'above',
-      previewHeightPx: 40,
-      lineHeightPx: 20,
-    }).start).toBeLessThan(10);
-  });
+
 });

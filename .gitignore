@@ -10,4 +10,5 @@ coverage/
 
 
 .tmp-tikz-smoke/
+.tmp-ocr-accuracy/
 resources/tikz-worker-source.tar.gz

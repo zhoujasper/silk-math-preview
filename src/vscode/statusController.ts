@@ -99,10 +99,18 @@ export class StatusController implements vscode.Disposable {
       vscode.commands.registerCommand(cmd('openSettings'), () => (
         vscode.commands.executeCommand('workbench.action.openSettings', COMMAND_NS)
       )),
+      vscode.commands.registerCommand(cmd('editPreviewCss'), async () => {
+        this.hideMenu();
+        const editor = require('./preview-css') as typeof import('./preview-css');
+        await editor.openPreviewCss(this.context);
+      }),
       vscode.window.onDidChangeActiveTextEditor(() => this.refresh()),
       vscode.window.onDidChangeActiveColorTheme(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (!event.affectsConfiguration(COMMAND_NS)) return;
+        if (event.affectsConfiguration(`${COMMAND_NS}.previewCss`)
+          && ['enabled', 'enableInLatex', 'enableInMarkdown', 'enableInOtherFiles', 'previewDefinitions', 'previewScale', 'tikz.enabled', 'ocr.enabled']
+            .every((key) => !event.affectsConfiguration(`${COMMAND_NS}.${key}`))) return;
         this.reconcilePending();
         this.refresh();
       }),
@@ -118,6 +126,7 @@ export class StatusController implements vscode.Disposable {
 
   /** 该文档按什么语法扫描；返回 undefined 表示这里不做预览。 */
   public previewLanguage(document: vscode.TextDocument): PreviewLanguage | undefined {
+    if (document.uri.scheme === `${COMMAND_NS.toLowerCase()}-css`) return undefined;
     if (this.isSnoozed() || this.isExcluded(document.uri)) return undefined;
     if (isLatex(document)) return this.settingBool('enableInLatex', true, document.uri) ? 'latex' : undefined;
     if (isMarkdown(document)) return this.settingBool('enableInMarkdown', true, document.uri) ? 'markdown' : undefined;
@@ -295,7 +304,7 @@ export class StatusController implements vscode.Disposable {
   }
 
   /**
-   * 点击状态栏或命令面板打开顶部菜单。开关类操作后保持打开并刷新。
+   * 点击状态栏或命令面板打开顶部菜单。开关类操作后保持打开并刷新，失焦时关闭。
    */
   private showMenu(): void {
     if (this.menuPicker) {
@@ -307,7 +316,7 @@ export class StatusController implements vscode.Disposable {
     this.menuPicker = picker;
     picker.title = PRODUCT_NAME;
     picker.placeholder = uiCopy(vscode.env.language).menuPlaceholder;
-    picker.ignoreFocusOut = true;
+    picker.ignoreFocusOut = false;
     picker.matchOnDescription = true;
     picker.keepScrollPosition = true;
     picker.items = this.menuItems(vscode.window.activeTextEditor?.document);
@@ -325,10 +334,10 @@ export class StatusController implements vscode.Disposable {
           picker.hide();
           return;
         }
+        if (item.closeMenu) picker.hide();
         void Promise.resolve(item.run()).then(() => {
-          if (item.closeMenu) picker.hide();
-          else refresh();
-        });
+          if (!item.closeMenu) refresh();
+        }).catch((error: unknown) => vscode.window.showErrorMessage(`${PRODUCT_NAME}: ${String(error)}`));
       }),
       picker.onDidHide(() => {
         for (const subscription of subscriptions) subscription.dispose();
@@ -371,6 +380,11 @@ export class StatusController implements vscode.Disposable {
         label: `$(discard) ${copy.resetDefault}`,
         description: fillTemplate(copy.currentPercent, { percent: nowPercent }),
         run: () => this.resetPreviewScale(),
+      },
+      {
+        label: `$(code) ${copy.editPreviewCss}`,
+        closeMenu: true,
+        run: () => vscode.commands.executeCommand(cmd('editPreviewCss')),
       },
       separator(copy.where),
       {

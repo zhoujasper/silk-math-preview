@@ -1,4 +1,6 @@
-export type PreviewPlacement = 'below' | 'above';
+import type { PreviewCss } from './previewCss';
+
+export type PreviewPlacement = 'below' | 'above' | 'right';
 export type PreviewThemeVariant = 'light' | 'dark' | 'high-contrast';
 
 export interface FloatingPreviewLayout {
@@ -155,6 +157,47 @@ export interface FloatingPreviewInput {
   readonly boxHeightPx?: number;
   readonly overflowX?: 'visible' | 'auto';
   readonly overflowY?: 'hidden' | 'auto';
+  /** 当前 Monaco 内容视口的 CSS anchor；像素估计不能代表分屏宽度。 */
+  readonly viewportAnchor?: string;
+  readonly customCss?: PreviewCss;
+  readonly image?: boolean;
+  readonly geometry?: PreviewGeometry;
+  readonly imageUri?: string;
+}
+
+/** 所有位置均来自当前编辑器的源码字形 anchor；回退只用于尚未生成字形的瞬间。 */
+export interface PreviewGeometry {
+  readonly start: string;
+  readonly end: string;
+  readonly right: readonly string[];
+  readonly sourceStart: string;
+  readonly sourceEnd: string;
+  readonly sourceRight: readonly string[];
+  readonly caretAtEnd?: boolean;
+}
+
+export function hasAdvancedPreviewCss(css: PreviewCss): boolean {
+  return css.anchor !== undefined || css.placement !== undefined || css.gap !== undefined || css.allowOverlap !== undefined;
+}
+
+/** 字号缩放的是矢量图片，编辑器行高保持不变；百分比相对菜单缩放后的原预览。 */
+export function previewFontScale(css: PreviewCss, nominalFontPx: number): number {
+  return !css.fontSize ? 1 : css.fontSize.unit === '%' ? css.fontSize.value / 100 : css.fontSize.value / Math.max(1, nominalFontPx);
+}
+
+/** 嵌套选择器只为含有本扩展 decoration 的内容视口命名，不改变工作台布局。 */
+export function previewViewportAnchorCss(): string {
+  // anchor-name 是列表型覆盖属性。两通道并存时都声明相同的完整列表，避免互相抹掉名字。
+  return 'none; .monaco-editor > .overflow-guard > .monaco-scrollable-element:has(:is(&)) { anchor-name: --silkMath-preview-viewport, --silkMathTest-preview-viewport; }';
+}
+
+/**
+ * 浮层放在 overflow-guard 的末尾伪元素。它的包含块与内容视口同级，
+ * 源码和视口都已完成布局，跨行 anchor 才是浏览器可接受的引用。
+ * 源码行内的伪元素不能引用祖先包含块或后续绝对定位行。
+ */
+export function previewOverlayCss(layout: FloatingPreviewLayout, testChannel = false): string {
+  return `${previewViewportAnchorCss()}; .monaco-editor > .overflow-guard:has(:is(&))::${testChannel ? 'before' : 'after'} { text-decoration: ${layout.textDecoration}; width: ${layout.width}; height: ${layout.height}; margin: 0; color: var(--vscode-editorHoverWidget-foreground); background-color: var(--vscode-editorHoverWidget-background); }`;
 }
 
 export interface PreviewHorizontalInput {
@@ -177,37 +220,6 @@ export interface PreviewHorizontalLayout {
   readonly boxHeightPx: number;
   readonly overflowX: 'visible' | 'auto';
   readonly overflowY: 'hidden' | 'auto';
-}
-
-export interface PreviewOverlayLinesInput {
-  readonly formulaStartLine: number;
-  readonly formulaEndLine: number;
-  readonly anchorLine: number;
-  readonly placement?: unknown;
-  readonly previewHeightPx: number;
-  readonly lineHeightPx: number;
-}
-
-export interface PreviewOverlayLines {
-  readonly start: number;
-  readonly end: number;
-}
-
-/**
- * 浮层盖住的源码行（含公式本身）。点滚动条会把光标落到这些行上，
- * 不能当成“离开公式”把预览清掉。
- */
-export function previewOverlayOccupiedLines(input: PreviewOverlayLinesInput): PreviewOverlayLines {
-  const formulaStart = Math.max(0, Math.round(finite(input.formulaStartLine, 0)));
-  const formulaEnd = Math.max(formulaStart, Math.round(finite(input.formulaEndLine, formulaStart)));
-  const anchor = Math.max(0, Math.round(finite(input.anchorLine, formulaEnd)));
-  const lineHeight = clamp(finite(input.lineHeightPx, MINIMUM_LINE_HEIGHT), MINIMUM_LINE_HEIGHT, MAXIMUM_LINE_HEIGHT);
-  const height = Math.max(1, finite(input.previewHeightPx, 1));
-  const extra = Math.max(1, Math.ceil(height / lineHeight) + 1);
-  if (normalizePreviewPlacement(input.placement) === 'above') {
-    return { start: Math.max(0, anchor - extra), end: Math.max(anchor, formulaEnd) };
-  }
-  return { start: formulaStart, end: anchor + extra };
 }
 
 export interface PreviewRangeStartInput {
@@ -236,8 +248,15 @@ const DEFAULT_FONT_SIZE = 14;
 
 /** 浮层与公式之间的空隙，只留一点视觉分隔。 */
 const PANEL_GAP_PX = 2;
-/** 面板内边距；背景只要刚好包住公式，不要一大圈空白。 */
-const PANEL_PADDING = '0.06em 0.12em';
+/** 留出少量呼吸空间；计入外框尺寸，不挤占公式本身。 */
+const PANEL_PADDING = '4px 8px';
+const PANEL_RADIUS = '6px';
+
+export function previewPanelInsets(css?: PreviewCss, theme: PreviewThemeVariant = 'dark'): { horizontal: number; vertical: number } {
+  const [top = 4, right = top, bottom = top, left = right] = css?.padding ?? [4, 8];
+  const border = css?.borderWidth ?? (theme === 'high-contrast' ? 2 : 0);
+  return { horizontal: left + right + 2 * border, vertical: top + bottom + 2 * border };
+}
 /**
  * Jupyter 格子会裁掉溢出的绝对定位 decoration，下一格还会盖住。
  * 在锚点行用 `after` 把行盒撑高，预览仍在公式下方，但整块留在当前格里。
@@ -348,6 +367,12 @@ export function floatingPreviewLayout(input: FloatingPreviewInput): FloatingPrev
   const boxWidth = Math.max(1, finite(input.boxWidthPx, width));
   const boxHeight = Math.max(1, finite(input.boxHeightPx, height));
   const scrollable = overflowX === 'auto' || overflowY === 'auto';
+  if (input.viewportAnchor && input.geometry && input.imageUri) {
+    return advancedPreviewLayout(input, theme, width, height, lineHeight, boxHeight);
+  }
+  if (input.viewportAnchor) {
+    return anchoredPreviewLayout(input, placement, theme, width, height, offsetPx, leftPx, boxHeight);
+  }
   return {
     placement,
     width: `${roundPx(overflowX === 'auto' ? boxWidth : width)}px`,
@@ -363,7 +388,7 @@ export function floatingPreviewLayout(input: FloatingPreviewInput): FloatingPrev
       'box-sizing: content-box',
       `padding: ${PANEL_PADDING}`,
       'line-height: 1',
-      'border-radius: 8px',
+      `border-radius: ${PANEL_RADIUS}`,
       `box-shadow: ${panelShadow(theme)}`,
       `overflow-x: ${overflowX}`,
       `overflow-y: ${overflowY}`,
@@ -376,6 +401,143 @@ export function floatingPreviewLayout(input: FloatingPreviewInput): FloatingPrev
       ...(scrollable ? overlayScrollbarCss(theme) : []),
       'user-select: none',
       'opacity: 0.98',
+      input.customCss?.declarations ?? '',
+    ].join('; '),
+  };
+}
+
+/**
+ * Monaco 的 view-line 是 scrollWidth（可以远宽于分屏），不能以 100% 当作视口。
+ * anchor() 把真实视口边缘换算到当前行的坐标；拖动分隔条、缩放、水平滚动由 CSS 重排，
+ * 不用扩展轮询尺寸，也不重启 Worker。宽图按原比例收进视口，避免 content:url 的裁切。
+ */
+function anchoredPreviewLayout(
+  input: FloatingPreviewInput,
+  placement: PreviewPlacement,
+  theme: PreviewThemeVariant,
+  width: number,
+  height: number,
+  offsetPx: number,
+  leftPx: number,
+  boxHeight: number,
+): FloatingPreviewLayout {
+  const name = input.viewportAnchor!;
+  const custom = input.customCss;
+  const ratio = width / height;
+  const insets = previewPanelInsets(custom, theme);
+  const outerWidth = roundPx(width + insets.horizontal);
+  const outerHeight = roundPx(height + insets.vertical);
+  // Monaco 的定位包含块可能只是结束行的文字 span（如两个字符的 \]）。
+  // 视口 anchor 不可用时，100% 会把图片连同 padding 缩到几乎 0；
+  // 回退必须使用图片的已知尺寸，不能使用源码行宽。
+  const viewportWidth = `anchor-size(${name} width, ${roundPx(outerWidth + 8)}px)`;
+  const viewportHeight = `anchor-size(${name} height, 100vh)`;
+  const maxWidth = custom?.maxWidth?.endsWith('%')
+    ? `calc(${viewportWidth} * ${parseFloat(custom.maxWidth) / 100})`
+    : custom?.maxWidth ?? `${outerWidth}px`;
+  const maxHeight = Math.min(boxHeight + insets.vertical, custom?.maxHeight ?? Infinity);
+  const image = input.image !== false;
+  const panelWidth = `max(1px, min(${outerWidth}px, ${maxWidth}, calc(${viewportWidth} - 8px)${image ? `, ${roundPx(Math.max(0, maxHeight - insets.vertical) * ratio + insets.horizontal)}px, calc((${viewportHeight} - ${8 + insets.vertical}px) * ${ratio} + ${insets.horizontal}px)` : ''}))`;
+  const panelHeight = image ? `calc((var(--silk-panel-width) - ${insets.horizontal}px) / ${ratio} + ${insets.vertical}px)` : `${outerHeight}px`;
+  const edge = placement === 'below' ? 'top' : 'bottom';
+  const startEdge = placement === 'below' ? 'top' : 'bottom';
+  const endEdge = placement === 'below' ? 'bottom' : 'top';
+  const y = offsetPx + (custom?.offsetY ?? 0) * (placement === 'below' ? 1 : -1);
+  const x = roundPx(leftPx + (custom?.offsetX ?? 0));
+  // 同理，anchor() 的 100% 回退是文字 span 的宽/高，并非编辑器视口。
+  // 缺少 anchor 时保留正常的行边落点；真实 anchor 可用时仍按分屏边界限位。
+  const fallbackRight = roundPx(Math.max(4, x) + outerWidth + 4);
+  const fallbackEnd = roundPx(Math.max(4, y) + outerHeight + 4);
+  return {
+    placement,
+    width: 'var(--silk-panel-width)',
+    height: 'var(--silk-panel-height)',
+    textDecoration: [
+      'none', 'position: absolute', `position-anchor: ${name}`,
+      `--silk-panel-width: ${panelWidth}`, `--silk-panel-height: ${panelHeight}`,
+      `left: clamp(calc(anchor(${name} left, 0px) + 4px), ${x}px, calc(anchor(${name} right, ${fallbackRight}px) - var(--silk-panel-width) - 4px))`,
+      `${edge}: clamp(calc(anchor(${name} ${startEdge}, 0px) + 4px), ${y}px, calc(anchor(${name} ${endEdge}, ${fallbackEnd}px) - var(--silk-panel-height) - 4px))`,
+      'box-sizing: border-box', 'object-fit: contain', 'object-position: center',
+      `padding: ${PANEL_PADDING}`, 'line-height: 1', `border-radius: ${PANEL_RADIUS}`,
+      ...(theme === 'high-contrast' ? ['border: 2px solid var(--vscode-contrastBorder)'] : []),
+      `box-shadow: ${panelShadow(theme)}`, 'overflow: hidden', 'isolation: isolate',
+      'z-index: 1000', 'pointer-events: none', 'user-select: none', 'opacity: 0.98',
+      ...(!image ? ['white-space: nowrap', 'text-overflow: ellipsis'] : []),
+      custom?.declarations ?? '',
+    ].join('; '),
+  };
+}
+
+/**
+ * 用四个 inset 划出可用空间。anchor() 只能用在 inset，不能放入 width/height。
+ * 非替换伪元素按可用空间收缩；SVG 背景使用 contain 保留完整图像和宽高比。
+ * 这样剩余空间小于图片时也不会为了容纳图片把它推回源码上。
+ */
+function advancedPreviewLayout(
+  input: FloatingPreviewInput, theme: PreviewThemeVariant, width: number, height: number,
+  lineHeight: number, boxHeight: number,
+): FloatingPreviewLayout {
+  const viewport = input.viewportAnchor!;
+  const geometry = input.geometry!;
+  const css = input.customCss!;
+  const placement: PreviewPlacement = input.placement === 'right' ? 'right' : normalizePreviewPlacement(input.placement);
+  const overlap = css.allowOverlap ?? false;
+  const gap = css.gap ? css.gap.value * (css.gap.unit === 'lh' ? lineHeight : 1) : PANEL_GAP_PX;
+  const base = anchoredPreviewLayout(input, placement, theme, width, height, lineHeight + gap, input.leftPx ?? 0, boxHeight);
+  const variables = base.textDecoration.split('; ').filter((declaration) => declaration.startsWith('--silk-panel-'));
+  const insets = previewPanelInsets(css, theme);
+  const a = (name: string, edge: string, fallback: number) => `anchor(${name} ${edge}, ${roundPx(fallback)}px)`;
+  const vp = (edge: string) => a(viewport, edge, edge === 'right' ? width + insets.horizontal + 8 : edge === 'bottom' ? height + insets.vertical + lineHeight + gap + 8 : 0);
+  const x = css.offsetX;
+  const y = css.offsetY;
+  const farRight = (names: readonly string[]) => `max(${names.map((name) => a(name, 'right', input.leftPx ?? 0)).join(', ')})`;
+  const horizontal = `clamp(calc(${vp('left')} + 4px), calc(${a(geometry.start, geometry.caretAtEnd ? 'right' : 'left', input.leftPx ?? 0)} + ${x}px), calc(${vp('right')} - var(--silk-panel-width) - 4px))`;
+  let left = horizontal;
+  const right = `calc(${vp('right')} + 4px)`;
+  let top = `calc(${vp('top')} + 4px)`;
+  let bottom = `calc(${vp('bottom')} + 4px)`;
+  if (placement === 'above') {
+    const desired = `calc(${a(geometry.start, 'top', lineHeight)} + ${gap - y}px)`;
+    const protectedEdge = `calc(${a(geometry.sourceStart, 'top', lineHeight)} + ${gap}px)`;
+    bottom = overlap
+      ? `clamp(${bottom}, ${desired}, calc(${vp('top')} - var(--silk-panel-height) - 4px))`
+      : `max(${bottom}, min(${desired}, calc(${vp('top')} - var(--silk-panel-height) - 4px)), ${protectedEdge})`;
+    // 靠近来源一侧摆放；max-height 约束后，auto 顶边吸收剩余空间。
+    top = overlap ? 'auto' : top;
+  } else if (placement === 'right') {
+    const referenceRight = geometry.caretAtEnd === undefined
+      ? farRight(geometry.right) : a(geometry.start, geometry.caretAtEnd ? 'right' : 'left', input.leftPx ?? 0);
+    const desired = `calc(${referenceRight} + ${gap + x}px)`;
+    left = overlap
+      ? `clamp(calc(${vp('left')} + 4px), ${desired}, calc(${vp('right')} - var(--silk-panel-width) - 4px))`
+      : `max(calc(${vp('left')} + 4px), min(${desired}, calc(${vp('right')} - var(--silk-panel-width) - 4px)), calc(${farRight(geometry.sourceRight)} + ${gap}px))`;
+    top = `clamp(${top}, calc(${a(geometry.start, 'top', 0)} + ${y}px), calc(${vp('bottom')} - var(--silk-panel-height) - 4px))`;
+  } else {
+    const desired = `calc(${a(geometry.end, 'bottom', lineHeight)} + ${gap + y}px)`;
+    const protectedEdge = `calc(${a(geometry.sourceEnd, 'bottom', lineHeight)} + ${gap}px)`;
+    top = overlap
+      ? `clamp(${top}, ${desired}, calc(${vp('bottom')} - var(--silk-panel-height) - 4px))`
+      : `max(${top}, min(${desired}, calc(${vp('bottom')} - var(--silk-panel-height) - 4px)), ${protectedEdge})`;
+  }
+  // Above 的 max-height 生效后用 auto 上边距吸收空白，让盒子贴着 bottom。
+  return {
+    placement, width: overlap ? 'var(--silk-panel-width)' : 'auto', height: overlap ? 'var(--silk-panel-height)' : 'auto',
+    textDecoration: [
+      'none', 'position: absolute', `position-anchor: ${viewport}`,
+      ...variables,
+      `left: ${left}`, `right: ${right}`, `top: ${top}`, `bottom: ${bottom}`,
+      'min-width: 0', 'min-height: 0', 'box-sizing: border-box',
+      'max-width: var(--silk-panel-width)', 'max-height: var(--silk-panel-height)',
+      ...(placement === 'above' && !overlap ? ['margin-top: auto !important'] : []),
+      // 覆盖 contentIconPath 的替换内容，保留零字符宽度的真实图片盒子。
+      "content: '' !important", `background-image: url('${input.imageUri}')`,
+      'background-size: contain', 'background-repeat: no-repeat', 'background-position: center',
+      'background-origin: content-box', 'background-clip: padding-box',
+      `padding: ${PANEL_PADDING}`, 'line-height: 1', `border-radius: ${PANEL_RADIUS}`,
+      ...(theme === 'high-contrast' ? ['border: 2px solid var(--vscode-contrastBorder)'] : []),
+      `box-shadow: ${panelShadow(theme)}`, 'overflow: hidden', 'isolation: isolate',
+      'z-index: 1000', 'pointer-events: none', 'user-select: none', 'opacity: 0.98',
+      css.declarations,
     ].join('; '),
   };
 }

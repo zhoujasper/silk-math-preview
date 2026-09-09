@@ -16,17 +16,12 @@ function regionAt(offset: number) {
 describe('decidePreviewSelection', () => {
   const first = regionAt(source.indexOf('a+b'));
   const second = regionAt(source.indexOf('c+d'));
-  const overlay = { startLine: 0, endLine: 1 };
 
   it('鼠标点在当前公式内立刻按新 offset 更新，即使落在浮层盖住的行上', () => {
     const offset = source.indexOf('a+b') + 2;
     expect(decidePreviewSelection({
-      kind: 'mouse',
-      offset,
-      offsetLine: 0,
       currentRegion: first,
       hitRegion: first,
-      overlay,
     })).toBe('update-at-offset');
     const expression = buildPreviewExpression(source, first, offset).expression;
     expect(expression).toBe(`a+${PREVIEW_CARET_TEX}b`);
@@ -35,35 +30,21 @@ describe('decidePreviewSelection', () => {
   it('鼠标点在浮层盖住的另一条公式上切换区域', () => {
     const offset = source.indexOf('c');
     expect(decidePreviewSelection({
-      kind: 'mouse',
-      offset,
-      offsetLine: 0,
       currentRegion: first,
       hitRegion: second,
-      overlay,
     })).toBe('switch-region');
     const expression = buildPreviewExpression(source, second, offset).expression;
     expect(expression).toBe(`${PREVIEW_CARET_TEX}c+d`);
   });
 
-  it('鼠标点在浮层盖住、且没有公式的行上保持预览', () => {
+  it('没有命中源码公式时清空，不再按浮层位置保留', () => {
     expect(decidePreviewSelection({
-      kind: 'mouse',
-      offset: source.indexOf('overlay'),
-      offsetLine: 1,
       currentRegion: first,
-      overlay,
-    })).toBe('keep-without-clear');
+    })).toBe('clear');
   });
 
-  it('离开公式且不在浮层上则清空', () => {
-    expect(decidePreviewSelection({
-      kind: 'keyboard',
-      offset: source.indexOf('before'),
-      offsetLine: 0,
-      currentRegion: first,
-      overlay,
-    })).toBe('clear');
+  it('未显示过公式时也保持清空', () => {
+    expect(decidePreviewSelection({})).toBe('clear');
   });
 });
 

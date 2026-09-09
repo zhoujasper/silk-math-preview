@@ -2,10 +2,12 @@
 
 // 公式推理流程适配自 OCR Buddy 的 MIT 实现（Copyright 2026 OCR Buddy
 // contributors）：pix2text-mfr TrOCR encoder/decoder、ByteLevel-BPE 解码和重复
-// token 退避。这里改为 VS Code Webview 的本地资源 URI、可释放会话和进度协议。
+// token 退避。后台 Worker 使用本地资源、可释放会话和进度协议。
 import * as ort from 'onnxruntime-web';
 
-import { computeLetterbox, shouldInvertMeanLuma } from './imageMath.js';
+import { computeLetterbox } from './imageMath.js';
+import { prepareFormulaImage } from './formulaImage.js';
+import { inspectFormula } from './formulaStructure.js';
 
 const INPUT_SIZE = 384;
 const DECODER_START_TOKEN = 2;
@@ -21,9 +23,17 @@ export interface FormulaAssetUrls {
 
 export interface FormulaRecognitionResult {
   readonly latex: string;
-  /** false 表示重复 token、达到长度上限或空结果，调用方应让用户复核。 */
+  /** false 表示未正常结束、结构异常或置信度仍低，调用方应让用户复核。 */
   readonly ok: boolean;
   readonly usedWasmFallback: boolean;
+  readonly hasTableGrid?: boolean;
+}
+
+interface DecodedFormula {
+  readonly latex: string;
+  readonly ok: boolean;
+  /** token 概率的几何均值，只用于同图候选比较，不是准确率承诺。 */
+  readonly confidence: number;
 }
 
 export interface FormulaProgress {
@@ -124,45 +134,16 @@ function sourceSize(source: CanvasImageSource): { width: number; height: number 
   return { width: INPUT_SIZE, height: INPUT_SIZE };
 }
 
-function invertImageData(data: ImageData): void {
-  const pixels = data.data;
-  for (let index = 0; index < pixels.length; index += 4) {
-    pixels[index] = 255 - (pixels[index] ?? 0);
-    pixels[index + 1] = 255 - (pixels[index + 1] ?? 0);
-    pixels[index + 2] = 255 - (pixels[index + 2] ?? 0);
-  }
-}
-
-function meanLuma(data: ImageData): number {
-  const pixels = data.data;
-  let sum = 0;
-  const count = Math.max(1, pixels.length / 4);
-  for (let index = 0; index < pixels.length; index += 4) {
-    sum += ((pixels[index] ?? 0) + (pixels[index + 1] ?? 0) + (pixels[index + 2] ?? 0)) / 3;
-  }
-  return sum / count;
-}
-
-function preprocessFormula(source: CanvasImageSource): InstanceType<typeof ort.Tensor> {
+function preprocessFormula(source: HTMLCanvasElement, padding: number): InstanceType<typeof ort.Tensor> {
   const canvas = document.createElement('canvas');
   canvas.width = INPUT_SIZE;
   canvas.height = INPUT_SIZE;
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) throw new Error('当前 Webview 无法创建 2D Canvas。');
+  if (!context) throw new Error('OCR 无法创建 2D Canvas。');
   context.fillStyle = '#fff';
   context.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
-  const size = sourceSize(source);
-  const box = computeLetterbox(size.width, size.height, INPUT_SIZE, 0.1);
+  const box = computeLetterbox(source.width, source.height, INPUT_SIZE, padding);
   context.drawImage(source, box.x, box.y, box.width, box.height);
-  const sampleX = Math.max(0, Math.floor(box.x));
-  const sampleY = Math.max(0, Math.floor(box.y));
-  const sampleWidth = Math.max(1, Math.min(INPUT_SIZE - sampleX, Math.floor(box.width)));
-  const sampleHeight = Math.max(1, Math.min(INPUT_SIZE - sampleY, Math.floor(box.height)));
-  const sample = context.getImageData(sampleX, sampleY, sampleWidth, sampleHeight);
-  if (shouldInvertMeanLuma(meanLuma(sample))) {
-    invertImageData(sample);
-    context.putImageData(sample, sampleX, sampleY);
-  }
 
   const pixels = context.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
   const plane = INPUT_SIZE * INPUT_SIZE;
@@ -241,9 +222,41 @@ export class FormulaEngine {
   }
 
   public async recognize(source: CanvasImageSource): Promise<FormulaRecognitionResult> {
+    const size = sourceSize(source);
+    let canvas: HTMLCanvasElement;
+    if (source instanceof HTMLCanvasElement) canvas = source;
+    else {
+      canvas = document.createElement('canvas'); canvas.width = size.width; canvas.height = size.height;
+      canvas.getContext('2d')!.drawImage(source, 0, 0);
+    }
+    const image = prepareFormulaImage(canvas);
+    if (image.blank) return { latex: '', ok: false, usedWasmFallback: false };
     const [tokenizer, sessions] = await Promise.all([this.getTokenizer(), this.getSessions()]);
+    const first = await this.decode(image.canvas, 0.1, tokenizer, sessions);
+    const candidates = [{ decoded: first, structure: inspectFormula(first.latex, image.singleLine, image.gridColumns) }];
+    // 正常图片只推理一次；异常结构或低置信度才调整边距再试，最多两次。
+    if (!first.ok || candidates[0]!.structure.suspicious || first.confidence < 0.7) {
+      const retry = await this.decode(image.canvas, 0.04, tokenizer, sessions);
+      candidates.push({ decoded: retry, structure: inspectFormula(retry.latex, image.singleLine, image.gridColumns) });
+    }
+    const score = ({ decoded, structure }: typeof candidates[number]): number =>
+      (decoded.ok && structure.valid ? 4 : 0) + (!structure.suspicious ? 2 : 0) + decoded.confidence;
+    candidates.sort((a, b) => score(b) - score(a));
+    const best = candidates[0]!;
+    return {
+      latex: best.structure.latex,
+      ok: best.decoded.ok && best.structure.valid && !best.structure.suspicious && best.decoded.confidence >= 0.7,
+      usedWasmFallback: false,
+      hasTableGrid: image.gridColumns !== undefined,
+    };
+  }
+
+  private async decode(
+    source: HTMLCanvasElement, padding: number, tokenizer: PreparedTokenizer,
+    sessions: readonly [ort.InferenceSession, ort.InferenceSession],
+  ): Promise<DecodedFormula> {
     const [encoder, decoder] = sessions;
-    const pixelValues = preprocessFormula(source);
+    const pixelValues = preprocessFormula(source, padding);
     let encoderOutput: ort.InferenceSession.OnnxValueMapType;
     try {
       encoderOutput = await encoder.run({ pixel_values: pixelValues });
@@ -265,6 +278,9 @@ export class FormulaEngine {
       const ids: number[] = [DECODER_START_TOKEN];
       let repeated = 1;
       let degenerate = false;
+      let ended = false;
+      let logProbability = 0;
+      let predictions = 0;
       for (let step = 0; step < MAX_TOKENS; step += 1) {
         this.onProgress?.({ stage: 'decoding', completed: step, total: MAX_TOKENS });
         const inputIds = new ort.Tensor(
@@ -294,12 +310,16 @@ export class FormulaEngine {
               next = token;
             }
           }
+          let sum = 0;
+          for (let token = 0; token < vocabularySize; token++) sum += Math.exp(values[offset + token]! - best);
+          logProbability -= Math.log(sum);
+          predictions++;
         } finally {
           inputIds.dispose();
           if (output) disposeTensorMap(output);
         }
 
-        if (next === EOS_TOKEN) break;
+        if (next === EOS_TOKEN) { ended = true; break; }
         repeated = next === ids[ids.length - 1] ? repeated + 1 : 1;
         if (repeated >= REPEAT_LIMIT) {
           degenerate = true;
@@ -308,10 +328,9 @@ export class FormulaEngine {
         ids.push(next);
       }
 
-      if (ids.length >= MAX_TOKENS) degenerate = true;
       const latex = decodeFormulaTokenIds(tokenizer, ids.slice(1));
       this.onProgress?.({ stage: 'decoding', completed: MAX_TOKENS, total: MAX_TOKENS });
-      return { latex, ok: !degenerate && latex.length > 0, usedWasmFallback: false };
+      return { latex, ok: ended && !degenerate && latex.length > 0, confidence: predictions ? Math.exp(logProbability / predictions) : 0 };
     } finally {
       disposeTensorMap(encoderOutput);
     }

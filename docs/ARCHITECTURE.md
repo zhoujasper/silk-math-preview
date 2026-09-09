@@ -23,10 +23,18 @@ lazy Render Worker ── MathJax TeX -> standalone SVG（一次渲染）
 默认预览路径不在主扩展线程加载 MathJax，也不运行外部进程。Worker 仅在光标进入公式后启动，
 空闲后终止。编辑和移动光标始终只解析附近窗口；语言诊断在停输后独立执行，不再额外为预览
 重复全文扫描。定义来源按加载顺序批量提交一次，快照只在光标跨过声明/依赖边界时变化。
-SVG 通过锚定公式起点的 `before` 伪元素显示，公式范围只提供 `position: relative` 定位上下文；
+SVG 通过锚定公式起点的 `before` 伪元素显示，公式范围的样式只为所在内容视口注册 CSS anchor；
 预览自身使用 `position: absolute` 放在下方或上方，不参与文本流、不撑高源码行，也不改变输入光标基线。
 面板背景/前景/边框直接使用 `editorHoverWidget.*` 主题令牌，高对比模式使用 `contrastBorder`；
 Light/Dark 只切换一层轻量 CSS 阴影，切换 VS Code 主题时会清空 SVG 缓存并重绘数学前景色。
+视口边缘通过 `anchor()` / `anchor-size()` 在当前行坐标系内限位，不将源码列数或 Monaco 的
+`scrollWidth` 当作分屏宽度；超宽/高 SVG 使用 `object-fit: contain` 等比例适应。拖动分屏与
+水平滚动由 CSS 重排；高度改变或只改 CSS 时复用 SVG。用户 CSS 保存到 application 范围设置，
+编辑入口按需加载原生 FileSystemProvider，提供声明/值补全、说明与示例插入，解析后只将支持的声明用于预览框。
+0.2.6 的 `PreviewSourceAnchors` 给实际源码字形命名，将图片绘制在 `overflow-guard` 的覆盖层，
+避免行内包含块使祖先视口/跨行 anchor 失效。按光标、选区或公式边界定位；禁止覆盖时用四边 inset
+约束可用区域，背景图 `contain` 等比缩放。正式/测试分别使用 after/before 伪元素，Esc/切换编辑器
+释放覆盖层与字形 decoration。字号仅缩放矢量图，CSS 修改继续复用 Worker 结果。详见 [预览 CSS](PREVIEW_CSS.md)。
 选区移到当前公式区域外时会在 selection event 中立即清理 decoration，不等待定义快照或
 Worker；浮层可见时用 context key 限定 `Esc` 关闭命令，关闭后不吞掉编辑器的其他 Escape 语义。
 扫描区域仍覆盖完整 `\begin/\end`；渲染前把不可嵌套的外层 display 环境转为
@@ -84,3 +92,10 @@ ORT、模型和图片始终使用本地 Webview URI；CSP 禁止任意网络源�
 定义 prelude 只写入最多两个受限上下文；每个公式进入 MathJax `begingroupSandbox`，禁用
 `\global/\gdef`，公式内临时宏不会污染下一次公式。工作区内容仅作为 TeX 数据解析，不执行
 其中代码。
+
+### 0.2.8：预览离开清理
+
+预览图片和源码锚点不接收鼠标事件；光标/选区命中源码公式才保留浮层。
+移除按估算占用行忽略鼠标点击的旧例外。选择事件与异步渲染共用公式定位，
+选区覆盖当前公式时保持；完全离开时在事件中同步清理，取消排队更新与定义刷新，
+递增 epoch 拒绝晚到的帧和错误提示。切换公式先清除旧帧，后台编辑器的选择事件不影响当前编辑器。

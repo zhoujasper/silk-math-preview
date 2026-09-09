@@ -59,11 +59,11 @@ export class OcrRecognizer {
     return this.text;
   }
   async recognize(source: HTMLCanvasElement, mode: OcrMode): Promise<OcrResult> {
-    normalizeBackground(source);
     if (mode === 'formula') {
       const result = await this.formula.recognize(source);
       return { text: wrapLatex(result.latex), ok: result.ok, mode };
     }
+    normalizeBackground(source);
     const service = await this.getText();
     this.report('text', 0.5);
     const text = await service.recognize(source, { flatten: false, noCache: true, strategy: mode === 'auto' ? 'per-box' : 'per-line' });
@@ -73,6 +73,8 @@ export class OcrRecognizer {
     if (prefersWholeFormula(text.text, cleanRecognizedLatex(whole.latex), whole.ok)) {
       return { text: wrapLatex(whole.latex), ok: whole.ok, mode };
     }
+    // 有真实格线的表格即使需要复核，也保留整表；不能再按文字行拆散所有单元格。
+    if (whole.hasTableGrid && whole.latex) return { text: wrapLatex(whole.latex), ok: whole.ok, mode };
     const lines: MixedOcrLine[] = [];
     let formulaLines = 0;
     for (const boxes of text.lines) {

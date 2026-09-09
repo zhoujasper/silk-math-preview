@@ -26,6 +26,22 @@ const shared = {
 const builds = [
   {
     ...shared,
+    entryPoints: ['src/vscode/preview-style.ts'],
+    outfile: 'dist/preview-style.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode'],
+  },
+  {
+    ...shared,
+    entryPoints: ['src/vscode/preview-css.ts'],
+    outfile: 'dist/preview-css.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode'],
+  },
+  {
+    ...shared,
     entryPoints: ['src/vscode/tikz-context.ts'],
     outfile: 'dist/tikz-context.js',
     platform: 'node',
@@ -46,7 +62,7 @@ const builds = [
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    external: ['vscode', './tikz-context.js'],
+    external: ['vscode', './tikz-context.js', './preview-style', './preview-css'],
   },
   {
     ...shared,

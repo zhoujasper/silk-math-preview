@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Check bilingual changelog
+        run: node scripts/release-notes.mjs > /dev/null
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -95,6 +97,8 @@ jobs:
         with:
           name: silk-math-preview-vsix
           path: .
+      - name: Prepare bilingual release notes
+        run: node scripts/release-notes.mjs > "$RUNNER_TEMP/silk-release-notes.md"
       - name: Publish to Visual Studio Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -117,6 +121,7 @@ jobs:
           TEST_VSIX="silk-math-preview-test-${VERSION}.vsix"
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" "$VSIX" "$TEST_VSIX" --clobber
+            gh release edit "$VERSION" --notes-file "$RUNNER_TEMP/silk-release-notes.md"
           else
-            gh release create "$VERSION" "$VSIX" "$TEST_VSIX" --title "$VERSION" --generate-notes --target "$GITHUB_SHA"
+            gh release create "$VERSION" "$VSIX" "$TEST_VSIX" --title "$VERSION" --notes-file "$RUNNER_TEMP/silk-release-notes.md" --target "$GITHUB_SHA"
           fi
