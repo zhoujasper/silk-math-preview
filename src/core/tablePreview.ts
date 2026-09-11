@@ -487,13 +487,14 @@ function hoistRules(text: string): { readonly rules: string; readonly rest: stri
   return { rules, rest };
 }
 
-function translateRow(text: string, numeric: readonly (string | undefined)[] = []): TableRow {
-  let rules = '';
-  const cells = splitTopLevel(text, '&').map((raw, column) => {
-    const hoisted = hoistRules(raw);
-    rules += hoisted.rules;
-    return hoisted.rest.trim() && numeric[column] !== undefined && !/\\class\{silk-span-/.test(hoisted.rest)
-      ? `\\silkSCell{${numeric[column]}}{${hoisted.rest}}` : translateCell(hoisted.rest, 0);
+function translateRow(text: string, numeric: readonly (string | undefined)[], caretMarker: string): TableRow {
+  const { rules, rest } = hoistRules(text);
+  // 末尾的换行和横线属于表格边界，不能让光标标记凭空创建一个单元格。
+  // 保留 &、文字和公式等真实内容；行内及已声明的空单元格仍显示光标。
+  const content = caretMarker && !rest.replace(caretMarker, '').trim() ? '' : rest;
+  const cells = splitTopLevel(content, '&').map((cell, column) => {
+    return cell.trim() && numeric[column] !== undefined && !/\\class\{silk-span-/.test(cell)
+      ? `\\silkSCell{${numeric[column]}}{${cell}}` : translateCell(cell, 0);
   });
   return { rules, cells };
 }
@@ -502,13 +503,13 @@ function translateRow(text: string, numeric: readonly (string | undefined)[] = [
  * 把表格环境正文翻译成 `array` 表达式。输入应当已经插好光标标记，
  * 标记在文本单元格里必须自带 `$...$`，由调用方保证。
  */
-export function buildTableExpression(body: string): string {
+export function buildTableExpression(body: string, caretMarker = ''): string {
   const preamble = readTablePreamble(body);
   const rewritten = rewriteTableCommands(body.slice(preamble.bodyStart));
   const numeric: Array<string | undefined> = [];
   const alignment = normalizeColumnSpec(preamble.spec, 0, numeric);
   const rows = splitTopLevel(rewritten, '\\\\')
-    .map((row) => translateRow(row, numeric))
+    .map((row, index, all) => translateRow(row, numeric, index === all.length - 1 ? caretMarker : ''))
     .filter((row) => row.rules !== '' || row.cells.some((cell) => cell !== ''));
   const columns = rows.reduce((maximum, row) => Math.max(maximum, row.cells.length), 0);
   const spec = padColumnSpec(alignment, Math.max(1, columns));

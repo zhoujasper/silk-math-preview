@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -20,11 +20,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Check repository publication boundaries
+        run: node scripts/check-publication.mjs
       - name: Check bilingual changelog
         run: node scripts/release-notes.mjs > /dev/null
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      - run: npm run check:completion-data
       - run: npm run build
       - name: Package VSIX
         run: npm run package:all
@@ -45,6 +47,14 @@ jobs:
           required = (
               "extension/package.json",
               "extension/dist/extension.js",
+              "extension/dist/math-completion.js",
+              "extension/dist/math-scanner.js",
+              "extension/dist/file-patterns.js",
+              "extension/dist/settings-ui.js",
+              "extension/dist/ocr-controller.js",
+              "extension/dist/ui-locale.js",
+              "extension/dist/preview-style.js",
+              "extension/dist/preview-css.js",
               "extension/dist/render-worker.js",
               "extension/dist/ocr-worker.js",
               "extension/dist/tikz-worker.js",
@@ -62,10 +72,12 @@ jobs:
               missing = [name for name in required if name not in names]
               if missing:
                   sys.exit(f"{path} missing {missing}")
-              banned = [name for name in names if "/test/" in name or name.endswith(".map") or "/src/" in name]
+              banned = [name for name in names if any(part.lower() in {"test", "tests", "docs", "scripts", "src", ".codex", ".local", "sessions"} for part in name.split("/")) or name.endswith((".map", ".jsonl", ".log")) or name.rsplit("/", 1)[-1].lower() in {"agents.md", "project_memory.md", "change_logs.md"}]
               if banned:
                   sys.exit(f"{path} must not include {banned[:8]}")
               manifest = json.loads(zipfile.ZipFile(path).read("extension/package.json"))
+              if manifest["version"] != version:
+                  sys.exit(f"{path} version={manifest['version']} expected {version}")
               if manifest["name"] != expect_name:
                   sys.exit(f"{path} name={manifest['name']} expected {expect_name}")
               if bool(manifest.get("private")) != expect_private:
@@ -80,7 +92,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: test
+    needs: build
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -91,26 +103,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: silk-math-preview-vsix
           path: .
       - name: Prepare bilingual release notes
         run: node scripts/release-notes.mjs > "$RUNNER_TEMP/silk-release-notes.md"
-      - name: Publish to Visual Studio Marketplace
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          set -euo pipefail
-          VERSION=$(node -p "require('./package.json').version")
-          VSIX="silk-math-preview-${VERSION}.vsix"
-          if [ -z "${VSCE_PAT:-}" ]; then
-            echo "::warning::Repository secret VSCE_PAT is not set. Skipping Marketplace publish. See docs/PUBLISH.md"
-            exit 0
-          fi
-          npx vsce publish --packagePath "$VSIX" --skip-duplicate
+      # Marketplace releases are uploaded manually by the maintainer.
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

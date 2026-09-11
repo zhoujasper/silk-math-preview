@@ -167,13 +167,11 @@ function collectMarkdownInlineCodeRanges(
   const ranges: TextRange[] = [];
   let cursor = 0;
   while (cursor < text.length) {
+    cursor = text.indexOf('`', cursor);
+    if (cursor < 0) break;
     const fence = rangeContaining(fenceRanges, cursor);
     if (fence !== undefined) {
       cursor = fence.end;
-      continue;
-    }
-    if (text[cursor] !== '`') {
-      cursor += 1;
       continue;
     }
 
@@ -222,6 +220,8 @@ function collectLatexCommentRanges(
   const comments: TextRange[] = [];
   let cursor = 0;
   while (cursor < text.length) {
+    cursor = text.indexOf('%', cursor);
+    if (cursor < 0) break;
     const ignored = rangeContaining(existingRanges, cursor);
     if (ignored !== undefined) {
       cursor = ignored.end;
@@ -458,8 +458,13 @@ function findFixedCloser(
 ): TextRange | undefined {
   const home = rangeContaining(codeLimits, opener.start);
   const searchEnd = home?.end ?? text.length;
+  const significant = /[$\\%\r\n]/g;
   let cursor = opener.end;
   while (cursor < searchEnd) {
+    significant.lastIndex = cursor;
+    const candidate = significant.exec(text);
+    if (!candidate || candidate.index >= searchEnd) break;
+    cursor = candidate.index;
     if (home === undefined) {
       const nestedCode = rangeContaining(codeLimits, cursor);
       if (nestedCode !== undefined) {
@@ -515,8 +520,13 @@ function findEnvironmentCloser(
   const home = rangeContaining(codeLimits, opener.start);
   const searchEnd = home?.end ?? text.length;
   let depth = 1;
+  const significant = /[\\%]/g;
   let cursor = opener.end;
   while (cursor < searchEnd) {
+    significant.lastIndex = cursor;
+    const candidate = significant.exec(text);
+    if (!candidate || candidate.index >= searchEnd) break;
+    cursor = candidate.index;
     if (home === undefined) {
       const nestedCode = rangeContaining(codeLimits, cursor);
       if (nestedCode !== undefined) {
@@ -631,8 +641,8 @@ export function scanMathRegions(
   // 表格环境本身不是数学模式，但预览会把它翻译成 array，因此同样按区域扫描。
   const environments = new Set<string>([
     ...DEFAULT_MATH_ENVIRONMENTS,
-    ...TABLE_ENVIRONMENTS,
-    ...TIKZ_ENVIRONMENTS,
+    ...(options.includePreviewContainers === false ? [] : TABLE_ENVIRONMENTS),
+    ...(options.includePreviewContainers === false ? [] : TIKZ_ENVIRONMENTS),
     ...customEnvironments,
   ]);
   const recoveryWindow = Math.max(
@@ -641,7 +651,7 @@ export function scanMathRegions(
   );
   const collected = collectIgnoredRanges(text, language, options.markdownInitialFence);
   const ignoredRanges = collected.ignored;
-  const tableRegions = language === 'markdown'
+  const tableRegions = language === 'markdown' && options.includePreviewContainers !== false
     ? collectMarkdownTableRegions(text, ignoredRanges)
     : [];
   // Markdown 行内代码 / fence 里的 $ 也要预览；定义解析仍用 ignoredRanges 跳过代码。
@@ -656,8 +666,13 @@ export function scanMathRegions(
   const codeLimits = collected.codeLimits;
   const regions: MathRegion[] = [...tableRegions];
 
+  const significant = /[$\\]/g;
   let cursor = 0;
   while (cursor < text.length) {
+    significant.lastIndex = cursor;
+    const candidate = significant.exec(text);
+    if (!candidate) break;
+    cursor = candidate.index;
     const ignored = rangeContaining(mathSkip, cursor);
     if (ignored !== undefined) {
       cursor = ignored.end;

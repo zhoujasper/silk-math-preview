@@ -10,13 +10,18 @@ import {
 } from '../core/statusFlyout';
 import { fillTemplate, uiCopy } from '../core/uiLocale';
 import { ocrCopy } from '../ocr/ocrCopy';
+import type { FileExclusions, FileExclusionTarget } from './fileExclusions';
 
 type FlyoutBoolKey = 'enableInLatex' | 'enableInMarkdown' | 'enableInOtherFiles' | 'previewDefinitions' | 'tikz.enabled';
 
 export type PreviewLanguage = 'latex' | 'markdown';
 export { DEFAULT_SCALE, MAX_SCALE, MIN_SCALE, SCALE_STEP, scaleToDisplayPercent };
 
-const EXCLUDED_FILES_KEY = `${COMMAND_NS}.excludedFiles`;
+const FILE_ACTIONS = [
+  ['toggleExcludeFile', 'preview'],
+  ['toggleExcludeCompletion', 'completion'],
+  ['toggleExcludeBoth', 'both'],
+] as const;
 const SNOOZE_MINUTES = [5, 30] as const;
 
 interface MenuItem extends vscode.QuickPickItem {
@@ -31,10 +36,6 @@ function isLatex(document: vscode.TextDocument): boolean {
 
 function isMarkdown(document: vscode.TextDocument): boolean {
   return document.languageId === 'markdown' || document.languageId === 'mdx';
-}
-
-function documentKey(uri: vscode.Uri): string {
-  return uri.toString();
 }
 
 function formatClock(time: number): string {
@@ -62,12 +63,11 @@ export class StatusController implements vscode.Disposable {
    * `get()` 经常还没刷新。
    */
   private readonly pending: Partial<Record<FlyoutBoolKey | 'previewScale', boolean | number>> = {};
-  private pendingExclude: { readonly key: string; readonly value: boolean } | undefined;
 
   /** 策略变化（文件类型开关、暂停、排除、缩放）时触发，预览据此重画。 */
   public readonly onDidChange = this.changeEmitter.event;
 
-  public constructor(private readonly context: vscode.ExtensionContext) {
+  public constructor(private readonly context: vscode.ExtensionContext, private readonly exclusions: FileExclusions) {
     this.captureItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 30);
     this.captureItem.text = '$(screen-full)';
     this.captureItem.command = cmd('ocr.capture');
@@ -91,14 +91,27 @@ export class StatusController implements vscode.Disposable {
       vscode.commands.registerCommand(cmd('toggleLanguage'), (key: unknown) => this.toggleLanguage(key)),
       vscode.commands.registerCommand(cmd('togglePreviewDefinitions'), () => this.togglePreviewDefinitions()),
       vscode.commands.registerCommand(cmd('toggleTikz'), () => this.toggleTikz()),
-      vscode.commands.registerCommand(cmd('toggleExcludeFile'), () => this.toggleExcludeFile()),
+      ...FILE_ACTIONS.map(([command, target]) =>
+        vscode.commands.registerCommand(cmd(command), () => this.toggleExcludeFile(target))),
+      exclusions.onDidChange(mask => this.refresh((mask & 1) !== 0)),
       vscode.commands.registerCommand(cmd('snooze'), (minutes: unknown) => {
+        if (minutes === undefined) minutes = 5;
         if (typeof minutes === 'number' && minutes > 0) this.snooze(minutes);
         else this.resume();
       }),
+      vscode.commands.registerCommand(cmd('snooze30Minutes'), () => this.snooze(30)),
+      vscode.commands.registerCommand(cmd('resumePreview'), () => this.resume()),
       vscode.commands.registerCommand(cmd('openSettings'), () => (
         vscode.commands.executeCommand('workbench.action.openSettings', COMMAND_NS)
       )),
+      vscode.commands.registerCommand(cmd('editFileExclusions'), () => {
+        this.hideMenu();
+        return (require('./settings-ui') as typeof import('./settings-ui')).editFileExclusions(this.context);
+      }),
+      vscode.commands.registerCommand(cmd('configureShortcuts'), () => {
+        this.hideMenu();
+        return (require('./settings-ui') as typeof import('./settings-ui')).configureShortcuts(this.context);
+      }),
       vscode.commands.registerCommand(cmd('editPreviewCss'), async () => {
         this.hideMenu();
         const editor = require('./preview-css') as typeof import('./preview-css');
@@ -108,11 +121,10 @@ export class StatusController implements vscode.Disposable {
       vscode.window.onDidChangeActiveColorTheme(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (!event.affectsConfiguration(COMMAND_NS)) return;
-        if (event.affectsConfiguration(`${COMMAND_NS}.previewCss`)
-          && ['enabled', 'enableInLatex', 'enableInMarkdown', 'enableInOtherFiles', 'previewDefinitions', 'previewScale', 'tikz.enabled', 'ocr.enabled']
-            .every((key) => !event.affectsConfiguration(`${COMMAND_NS}.${key}`))) return;
         this.reconcilePending();
-        this.refresh();
+        this.refresh(['enabled', 'enableInLatex', 'enableInMarkdown', 'enableInOtherFiles',
+          'previewDefinitions', 'previewScale', 'tikz.enabled']
+          .some(key => event.affectsConfiguration(`${COMMAND_NS}.${key}`)));
       }),
     );
     this.refresh();
@@ -127,7 +139,7 @@ export class StatusController implements vscode.Disposable {
   /** 该文档按什么语法扫描；返回 undefined 表示这里不做预览。 */
   public previewLanguage(document: vscode.TextDocument): PreviewLanguage | undefined {
     if (document.uri.scheme === `${COMMAND_NS.toLowerCase()}-css`) return undefined;
-    if (this.isSnoozed() || this.isExcluded(document.uri)) return undefined;
+    if (this.isSnoozed() || this.exclusions.isExcluded(document, 'preview')) return undefined;
     if (isLatex(document)) return this.settingBool('enableInLatex', true, document.uri) ? 'latex' : undefined;
     if (isMarkdown(document)) return this.settingBool('enableInMarkdown', true, document.uri) ? 'markdown' : undefined;
     return this.settingBool('enableInOtherFiles', false, document.uri) ? 'latex' : undefined;
@@ -135,12 +147,6 @@ export class StatusController implements vscode.Disposable {
 
   public tikzEnabled(document?: vscode.TextDocument): boolean {
     return this.settingBool('tikz.enabled', false, document?.uri);
-  }
-
-  public isExcluded(uri: vscode.Uri): boolean {
-    const key = documentKey(uri);
-    if (this.pendingExclude?.key === key) return this.pendingExclude.value;
-    return this.excludedFiles().includes(key);
   }
 
   public isSnoozed(): boolean {
@@ -202,34 +208,19 @@ export class StatusController implements vscode.Disposable {
       const raw = config.get('previewScale', DEFAULT_SCALE);
       if (raw === this.pending.previewScale) delete this.pending.previewScale;
     }
-    if (this.pendingExclude && this.excludedFiles().includes(this.pendingExclude.key) === this.pendingExclude.value) {
-      this.pendingExclude = undefined;
-    }
   }
 
-  private excludedFiles(): string[] {
-    return this.context.workspaceState.get<string[]>(EXCLUDED_FILES_KEY, []);
-  }
-
-  private async setExcluded(uri: vscode.Uri, excluded: boolean): Promise<void> {
-    const key = documentKey(uri);
-    const current = this.excludedFiles().filter((entry) => entry !== key);
-    if (excluded) current.push(key);
-    await this.context.workspaceState.update(EXCLUDED_FILES_KEY, current);
-    this.refresh();
-  }
-
-  private async toggleExcludeFile(): Promise<void> {
+  private toggleExcludeFile(target: FileExclusionTarget): Promise<void> | undefined {
     const document = vscode.window.activeTextEditor?.document;
-    if (!document) return;
-    const key = documentKey(document.uri);
-    const next = !this.isExcluded(document.uri);
-    this.pendingExclude = { key, value: next };
-    this.refresh();
-    await this.setExcluded(document.uri, next);
+    return document ? this.exclusions.toggle(document, target) : undefined;
   }
 
   private toggleLanguage(key: unknown): void {
+    if (key === undefined) {
+      const document = vscode.window.activeTextEditor?.document;
+      if (!document) return;
+      key = isLatex(document) ? 'enableInLatex' : isMarkdown(document) ? 'enableInMarkdown' : 'enableInOtherFiles';
+    }
     if (key !== 'enableInLatex' && key !== 'enableInMarkdown' && key !== 'enableInOtherFiles') return;
     const uri = vscode.window.activeTextEditor?.document.uri;
     const fallback = key !== 'enableInOtherFiles';
@@ -273,10 +264,10 @@ export class StatusController implements vscode.Disposable {
     this.refresh();
   }
 
-  private refresh(): void {
+  private refresh(previewChanged = true): void {
     const document = vscode.window.activeTextEditor?.document;
     const snoozed = this.isSnoozed();
-    const excluded = document !== undefined && this.isExcluded(document.uri);
+    const excluded = document !== undefined && this.exclusions.isExcluded(document, 'preview');
     const copy = uiCopy(vscode.env.language);
     const vars = { product: PRODUCT_NAME, time: formatClock(this.snoozeUntil) };
     this.item.text = PRODUCT_NAME;
@@ -300,7 +291,8 @@ export class StatusController implements vscode.Disposable {
       this.captureItem.show();
       if (!vscode.workspace.getConfiguration(COMMAND_NS).get('ocr.enabled', true)) this.captureItem.hide();
     }
-    this.changeEmitter.fire();
+    if (this.menuPicker) this.menuPicker.items = this.menuItems(document);
+    if (previewChanged) this.changeEmitter.fire();
   }
 
   /**
@@ -327,7 +319,6 @@ export class StatusController implements vscode.Disposable {
       }
     };
     const subscriptions = [
-      this.onDidChange(refresh),
       picker.onDidAccept(() => {
         const item = picker.selectedItems[0];
         if (!item?.run) {
@@ -359,9 +350,10 @@ export class StatusController implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration(COMMAND_NS, document?.uri);
     const uri = document?.uri;
     const copy = uiCopy(vscode.env.language);
+    const completionMode = document && (isLatex(document) || isMarkdown(document))
+      ? vscode.workspace.getConfiguration(COMMAND_NS, document).get<string>('completion.mode', 'on') : undefined;
     const check = (value: boolean): string => (value ? '$(check)' : '$(blank)');
     const scale = this.previewScale(uri);
-    const excluded = document !== undefined && this.isExcluded(document.uri);
     const separator = (label: string): MenuItem => ({ label, kind: vscode.QuickPickItemKind.Separator });
     const growPercent = scaleToDisplayPercent(Math.min(MAX_SCALE, scale + SCALE_STEP));
     const shrinkPercent = scaleToDisplayPercent(Math.max(MIN_SCALE, scale - SCALE_STEP));
@@ -411,12 +403,22 @@ export class StatusController implements vscode.Disposable {
         run: () => this.toggleTikz(),
       },
       separator(copy.thisFile),
-      ...(document
-        ? [{
-          label: excluded ? `$(check) ${copy.unexcludeFile}` : `$(circle-slash) ${copy.excludeFile}`,
-          run: () => this.toggleExcludeFile(),
-        }]
-        : []),
+      ...(document ? FILE_ACTIONS.map(([, target], index) => {
+        const excluded = this.exclusions.isFileExcluded(document, target);
+        const rule = this.exclusions.matchingRule(document, target);
+        return {
+          label: `${excluded ? '$(discard)' : '$(circle-slash)'} ${fillTemplate(
+            excluded ? copy.unexcludeFile : copy.excludeFile, { feature: copy.fileFeatures[index]! })}`,
+          description: rule ? fillTemplate(copy.fileTypeExcluded, { rule }) : '',
+          run: () => this.exclusions.toggle(document, target),
+        };
+      }) : []),
+      {
+        label: `$(edit) ${copy.editFileExclusions}`,
+        description: '*.tex · notes.tex · path/file.tex',
+        closeMenu: true,
+        run: () => vscode.commands.executeCommand(cmd('editFileExclusions')),
+      },
       separator(copy.snoozeSection),
       ...(this.isSnoozed()
         ? [{
@@ -442,6 +444,22 @@ export class StatusController implements vscode.Disposable {
           run: () => vscode.commands.executeCommand(cmd('ocr.open')),
         }]
         : []),
+      {
+        label: `$(symbol-keyword) ${copy.completionMode}`,
+        description: completionMode ? `${document!.languageId} · ${completionMode}` : '',
+        closeMenu: true,
+        run: () => vscode.commands.executeCommand(cmd('configureCompletionMode')),
+      },
+      ...(completionMode === 'manual' && !this.exclusions.isExcluded(document!, 'completion') ? [{
+        label: `$(keyboard) ${copy.configureCompletionShortcut}`,
+        closeMenu: true,
+        run: () => vscode.commands.executeCommand(cmd('configureCompletionShortcut')),
+      }] : []),
+      {
+        label: `$(keyboard) ${copy.configureShortcuts}`,
+        closeMenu: true,
+        run: () => vscode.commands.executeCommand(cmd('configureShortcuts')),
+      },
       {
         label: `$(gear) ${fillTemplate(copy.openSettingsProduct, { product: PRODUCT_NAME })}`,
         closeMenu: true,

@@ -1,20 +1,20 @@
 import * as vscode from 'vscode';
 
 import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
-import { createCompletionCatalog } from '../core/completionCatalog.js';
+import { CompletionController } from './completionController';
+import type { FileExclusions } from './fileExclusions';
 import { diagnoseMath } from '../core/diagnostics.js';
-import { findMathRegionAt, mathRegionContent, scanMathRegions } from '../core/mathScanner.js';
+import { mathRegionContent, scanMathRegions } from '../core/mathScanner.js';
 import type {
-  CompletionEntry,
   DiagnosticFix,
   MathDiagnostic,
 } from '../core/types.js';
 import type {
-  DefinitionSnapshot,
   DefinitionWorkspace,
 } from './definitionWorkspace.js';
 
 interface DocumentFixes {
+  readonly context: string;
   readonly version: number;
   readonly diagnostics: readonly MathDiagnostic[];
 }
@@ -30,8 +30,9 @@ const SELECTOR: vscode.DocumentSelector = [
 export function registerLanguageFeatures(
   context: vscode.ExtensionContext,
   definitions: DefinitionWorkspace,
+  exclusions: FileExclusions,
 ): vscode.Disposable {
-  const controller = new LanguageFeatureController(definitions);
+  const controller = new LanguageFeatureController(definitions, exclusions);
   context.subscriptions.push(controller);
   return controller;
 }
@@ -44,15 +45,10 @@ class LanguageFeatureController implements vscode.Disposable {
   private readonly fixes = new Map<string, DocumentFixes>();
   private disposed = false;
 
-  public constructor(private readonly definitions: DefinitionWorkspace) {
+  public constructor(private readonly definitions: DefinitionWorkspace, exclusions: FileExclusions) {
     this.disposables.push(
       this.diagnosticCollection,
-      vscode.languages.registerCompletionItemProvider(
-        SELECTOR,
-        { provideCompletionItems: (document, position) => this.provideCompletions(document, position) },
-        '\\',
-        '{',
-      ),
+      new CompletionController(definitions, exclusions),
       vscode.languages.registerCodeActionsProvider(
         SELECTOR,
         {
@@ -96,71 +92,6 @@ class LanguageFeatureController implements vscode.Disposable {
     }
     this.scanGeneration.clear();
     this.fixes.clear();
-  }
-
-  private async provideCompletions(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-  ): Promise<vscode.CompletionList | undefined> {
-    if (!isSupportedDocument(document)) {
-      return undefined;
-    }
-    const text = document.getText();
-    const offset = document.offsetAt(position);
-    const snapshot = await this.definitions.getSnapshot(document, offset);
-    const customEnvironments = mergedEnvironments(snapshot);
-    const regions = scanMathRegions(text, {
-      language: document.languageId === 'markdown' || document.languageId === 'mdx' ? 'markdown' : 'latex',
-      customMathEnvironments: customEnvironments,
-    }).regions;
-    const environmentContext = readEnvironmentCompletionContext(text, offset);
-    const insideMath = findMathRegionAt(regions, offset) !== undefined;
-    if (!environmentContext && !insideMath) {
-      return undefined;
-    }
-
-    const catalog = createCompletionCatalog({
-      customCommands: snapshot.commands,
-      customEnvironments,
-    });
-    const items: vscode.CompletionItem[] = [];
-    if (environmentContext) {
-      const replacement = new vscode.Range(
-        document.positionAt(environmentContext.start),
-        position,
-      );
-      for (const entry of catalog) {
-        if (entry.kind !== 'environment') {
-          continue;
-        }
-        const item = new vscode.CompletionItem(entry.label, vscode.CompletionItemKind.Struct);
-        item.insertText = entry.label;
-        item.range = replacement;
-        item.detail = completionDetail(entry, snapshot);
-        item.filterText = entry.label;
-        items.push(item);
-      }
-      return new vscode.CompletionList(items, false);
-    }
-
-    const commandContext = readCommandCompletionContext(text, offset);
-    const replacement = commandContext
-      ? new vscode.Range(document.positionAt(commandContext.start), position)
-      : undefined;
-    for (const entry of catalog) {
-      if (entry.kind !== 'command') {
-        continue;
-      }
-      const item = new vscode.CompletionItem(entry.label, vscode.CompletionItemKind.Function);
-      item.insertText = commandSnippet(entry, snapshot);
-      if (replacement) {
-        item.range = replacement;
-      }
-      item.detail = completionDetail(entry, snapshot);
-      item.filterText = entry.label;
-      items.push(item);
-    }
-    return new vscode.CompletionList(items, false);
   }
 
   private provideCodeActions(
@@ -224,6 +155,11 @@ class LanguageFeatureController implements vscode.Disposable {
     this.scanGeneration.set(key, generation);
     const version = document.version;
     const text = document.getText();
+    if (!/[$\\]/.test(text)) {
+      this.fixes.delete(key);
+      this.diagnosticCollection.delete(document.uri);
+      return;
+    }
     const snapshot = await this.definitions.getSnapshot(document, text.length);
     if (
       this.disposed ||
@@ -234,12 +170,17 @@ class LanguageFeatureController implements vscode.Disposable {
       return;
     }
 
+    const config = vscode.workspace.getConfiguration(COMMAND_NS, document);
+    const environments = [...new Set([...snapshot.environments, ...config.get<readonly string[]>('customMathEnvironments', [])])];
+    const typoFixesEnabled = config.get('quickFixOnType', true);
+    const context = JSON.stringify([snapshot.fingerprint, environments, typoFixesEnabled]);
+    const previous = this.fixes.get(key);
+    if (previous?.version === version && previous.context === context) return;
     const regions = scanMathRegions(text, {
       language: document.languageId === 'markdown' || document.languageId === 'mdx' ? 'markdown' : 'latex',
-      customMathEnvironments: mergedEnvironments(snapshot),
+      customMathEnvironments: environments,
     }).regions;
     const knownCommands = new Set(snapshot.commands);
-    const typoFixesEnabled = vscode.workspace.getConfiguration(COMMAND_NS).get('quickFixOnType', true);
     const coreDiagnostics = regions.flatMap((region) =>
       diagnoseMath(mathRegionContent(text, region), { offset: region.contentStart }),
     ).filter((diagnostic) =>
@@ -257,7 +198,7 @@ class LanguageFeatureController implements vscode.Disposable {
       item.source = PRODUCT_NAME;
       return item;
     });
-    this.fixes.set(key, { version, diagnostics: coreDiagnostics });
+    this.fixes.set(key, { version, context, diagnostics: coreDiagnostics });
     this.diagnosticCollection.set(document.uri, vscodeDiagnostics);
   }
 
@@ -272,76 +213,6 @@ class LanguageFeatureController implements vscode.Disposable {
     this.fixes.delete(key);
     this.diagnosticCollection.delete(document.uri);
   }
-}
-
-function commandSnippet(
-  entry: CompletionEntry,
-  snapshot: DefinitionSnapshot,
-): vscode.SnippetString {
-  const snippet = new vscode.SnippetString();
-  snippet.appendText(entry.insertText);
-  const definition = snapshot.commandDefinitions.find((candidate) => candidate.name === entry.label);
-  if (!definition) {
-    return snippet;
-  }
-  for (const argument of definition.arguments) {
-    if (argument.kind === 'optional') {
-      snippet.appendText('[');
-      snippet.appendPlaceholder(argument.defaultValue ?? 'value');
-      snippet.appendText(']');
-    } else {
-      snippet.appendText('{');
-      snippet.appendPlaceholder(`arg${argument.index}`);
-      snippet.appendText('}');
-    }
-  }
-  return snippet;
-}
-
-function completionDetail(entry: CompletionEntry, snapshot: DefinitionSnapshot): string {
-  if (entry.kind === 'command') {
-    const definition = snapshot.commandDefinitions.find((candidate) => candidate.name === entry.label);
-    if (definition?.expandability === 'recognized-limited' || snapshot.recognizedLimited.includes(definition!)) {
-      return '工作区自定义命令（仅识别，复杂定义不进入预览）';
-    }
-  } else {
-    const definition = snapshot.environmentDefinitions.find((candidate) => candidate.name === entry.label);
-    if (definition?.expandability === 'recognized-limited' || snapshot.recognizedLimited.includes(definition!)) {
-      return '工作区自定义环境（仅识别，复杂定义不进入预览）';
-    }
-  }
-  return entry.detail;
-}
-
-function mergedEnvironments(snapshot: DefinitionSnapshot): readonly string[] {
-  const configured = vscode.workspace
-    .getConfiguration(COMMAND_NS)
-    .get<readonly string[]>('customMathEnvironments', []);
-  return [...new Set([...snapshot.environments, ...configured])];
-}
-
-function readCommandCompletionContext(
-  text: string,
-  offset: number,
-): { readonly start: number } | undefined {
-  const windowStart = Math.max(0, offset - 128);
-  const before = text.slice(windowStart, offset);
-  const match = /\\[A-Za-z@]*$/.exec(before);
-  return match ? { start: windowStart + (match.index ?? 0) } : undefined;
-}
-
-function readEnvironmentCompletionContext(
-  text: string,
-  offset: number,
-): { readonly start: number } | undefined {
-  const windowStart = Math.max(0, offset - 256);
-  const before = text.slice(windowStart, offset);
-  const match = /\\(?:begin|end)\{([A-Za-z0-9@:_-]*\*?)$/.exec(before);
-  if (!match) {
-    return undefined;
-  }
-  const partial = match[1] ?? '';
-  return { start: offset - partial.length };
 }
 
 function makeCodeAction(

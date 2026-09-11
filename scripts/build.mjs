@@ -16,14 +16,74 @@ const channelPlugin = {
 };
 const shared = {
   bundle: true,
+  charset: 'utf8',
   minify: !watch,
   sourcemap: watch,
   logLevel: 'info',
   target: 'node18',
-  plugins: [channelPlugin],
+  plugins: [channelPlugin, {
+    name: 'shared-ui-locale',
+    setup(build) {
+      build.onResolve({ filter: /\/uiLocale(?:\.js)?$/ }, () => ({ path: './ui-locale', external: true }));
+    },
+  }],
+};
+// Preview and completion use the same scanner. Workers keep their own isolated bundles.
+const sharedScanner = {
+  name: 'shared-math-scanner',
+  setup(build) {
+    build.onResolve({ filter: /\/mathScanner(?:\.js)?$/ }, () => ({ path: './math-scanner', external: true }));
+  },
 };
 
 const builds = [
+  {
+    ...shared,
+    entryPoints: ['src/core/mathScanner.ts'],
+    outfile: 'dist/math-scanner.js',
+    platform: 'node',
+    format: 'cjs',
+  },
+  {
+    ...shared,
+    entryPoints: ['src/vscode/ui-locale.ts'],
+    plugins: [channelPlugin],
+    outfile: 'dist/ui-locale.js',
+    platform: 'node',
+    format: 'cjs',
+  },
+  {
+    ...shared,
+    entryPoints: ['src/vscode/settings-ui.ts'],
+    outfile: 'dist/settings-ui.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode'],
+  },
+  {
+    ...shared,
+    entryPoints: ['src/vscode/ocrController.ts'],
+    outfile: 'dist/ocr-controller.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode'],
+  },
+  {
+    ...shared,
+    entryPoints: ['src/core/filePatterns.ts'],
+    outfile: 'dist/file-patterns.js',
+    platform: 'node',
+    format: 'cjs',
+  },
+  {
+    ...shared,
+    entryPoints: ['src/vscode/math-completion.ts'],
+    plugins: [...shared.plugins, sharedScanner],
+    outfile: 'dist/math-completion.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode'],
+  },
   {
     ...shared,
     entryPoints: ['src/vscode/preview-style.ts'],
@@ -59,10 +119,11 @@ const builds = [
   {
     ...shared,
     entryPoints: ['src/extension.ts'],
+    plugins: [...shared.plugins, sharedScanner],
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    external: ['vscode', './tikz-context.js', './preview-style', './preview-css'],
+    external: ['vscode', './tikz-context.js', './preview-style', './preview-css', './math-completion.js', './file-patterns', './settings-ui', './ocr-controller'],
   },
   {
     ...shared,
@@ -73,6 +134,7 @@ const builds = [
   },
   {
     bundle: true,
+    charset: 'utf8',
     minify: !watch,
     sourcemap: watch,
     logLevel: 'info',

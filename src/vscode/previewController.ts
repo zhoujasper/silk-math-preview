@@ -357,8 +357,13 @@ export class PreviewController implements vscode.Disposable {
           this.svgCache.clear();
           this.schedule(vscode.window.activeTextEditor, 0);
         }
-        if (!event.affectsConfiguration(COMMAND_NS)) return;
+        if (!event.affectsConfiguration(COMMAND_NS)
+          || (!Object.keys(this.settings).some(key => event.affectsConfiguration(`${COMMAND_NS}.${key}`))
+            && !event.affectsConfiguration(`${COMMAND_NS}.tikz.enabled`)
+            && !event.affectsConfiguration(`${COMMAND_NS}.customMathEnvironments`))) return;
         const cssOnly = event.affectsConfiguration(`${COMMAND_NS}.previewCss`)
+          && !event.affectsConfiguration(`${COMMAND_NS}.tikz.enabled`)
+          && !event.affectsConfiguration(`${COMMAND_NS}.customMathEnvironments`)
           && Object.keys(this.settings).every((key) => key === 'previewCss' || !event.affectsConfiguration(`${COMMAND_NS}.${key}`));
         this.settings = readSettings();
         this.appearanceVersion += 1;

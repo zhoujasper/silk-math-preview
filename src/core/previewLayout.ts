@@ -192,12 +192,16 @@ export function previewViewportAnchorCss(): string {
 }
 
 /**
- * 浮层放在 overflow-guard 的末尾伪元素。它的包含块与内容视口同级，
- * 源码和视口都已完成布局，跨行 anchor 才是浏览器可接受的引用。
+ * 浮层必须在源码之后：正式版使用 overflow-guard::after，测试版使用
+ * 外层 monaco-editor::after。两处独立，且正文和视口均先完成布局。
+ * overflow-guard::before 排在绝对定位的视口之前，无法引用其中的 anchor。
  * 源码行内的伪元素不能引用祖先包含块或后续绝对定位行。
  */
 export function previewOverlayCss(layout: FloatingPreviewLayout, testChannel = false): string {
-  return `${previewViewportAnchorCss()}; .monaco-editor > .overflow-guard:has(:is(&))::${testChannel ? 'before' : 'after'} { text-decoration: ${layout.textDecoration}; width: ${layout.width}; height: ${layout.height}; margin: 0; color: var(--vscode-editorHoverWidget-foreground); background-color: var(--vscode-editorHoverWidget-background); }`;
+  const host = testChannel
+    ? '.monaco-editor:has(> .overflow-guard :is(&))'
+    : '.monaco-editor > .overflow-guard:has(:is(&))';
+  return `${previewViewportAnchorCss()}; ${host}::after { text-decoration: ${layout.textDecoration}; width: ${layout.width}; height: ${layout.height}; margin: 0; color: var(--vscode-editorHoverWidget-foreground); background-color: var(--vscode-editorHoverWidget-background); }`;
 }
 
 export interface PreviewHorizontalInput {

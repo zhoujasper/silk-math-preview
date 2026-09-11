@@ -18,6 +18,10 @@ export function transformManifest(pkg, channel) {
     }
   }
   for (const binding of next.contributes?.keybindings ?? []) {
+    if (binding.command === 'silkMathTest.triggerCompletion') {
+      binding.key = 'ctrl+alt+shift+space';
+      binding.mac = 'ctrl+alt+shift+space';
+    }
     if (binding.command === 'silkMathTest.togglePreview') {
       binding.key = 'ctrl+alt+shift+m';
       binding.mac = 'cmd+alt+shift+m';

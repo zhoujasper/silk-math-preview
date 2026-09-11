@@ -256,7 +256,7 @@ export function buildPreviewExpression(
     return { expression: buildMarkdownTableExpression(marked), caret };
   }
   if (table) {
-    return { expression: buildTableExpression(marked), caret };
+    return { expression: buildTableExpression(marked, marker), caret };
   }
   return {
     expression: region.environment

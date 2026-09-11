@@ -1,4 +1,4 @@
-# 预览 CSS 与高级定位（0.2.7）
+# 预览 CSS 与高级定位（0.2.12）
 
 点击右下角 **Silk Math → 编辑预览 CSS…**。打开的 `preview.css` 是可编辑的原生 CSS 标签，
 支持语法高亮、撤销和 Ctrl+S / Cmd+S。保存后生效；清空并保存恢复默认。首次打开带注释示例，
@@ -96,14 +96,30 @@ vertical/horizontal; top/horizontal/bottom; or top/right/bottom/left.
    本次处理的是预览越过当前编辑器边界造成的遮挡，不能承诺消除系统窗口本身的重叠。
 
 现在为含本扩展 decoration 的 Monaco 内容视口和源码边缘的零宽标记注册按通道区分的 anchor，
-图片放在 `overflow-guard` 的覆盖层伪元素内。覆盖层的包含块与内容视口同级，浏览器才能
+正式版图片放在 `overflow-guard::after`，测试版放在外层 `monaco-editor::after`。两处覆盖层都排在源码之后，浏览器才能
 引用完整视口和不同源码行；行内伪元素直接引用祖先包含块或其他绝对定位行会失效。
 `anchor()` 计算位置，`anchor-size()` 限制尺寸；可用空间由四边 inset 划定，背景图片使用
-`contain` 保持比例，预留 4px 视口边缘。正式与测试通道使用不同伪元素、源码名和设置。
+`contain` 保持比例，预留 4px 视口边缘。正式与测试通道使用不同的覆盖层容器、源码名和设置。
 不修改工作台文件、源码或其他编辑器布局，不注入页面脚本，不轮询或重复请求渲染。
 
 VS Code 1.95 升级到 Chromium 128，提供本方案使用的 CSS 嵌套、`:has()` 和锚点定位支持；
 因此安装包最低版本设为 1.95。VS Code 衍生编辑器还需要相应的 Chromium CSS 支持和 Monaco DOM 结构。
+
+### 0.2.12：测试版预览偏到左上角
+
+修正测试版在 `align` 等多行公式中预览偏到行号区、遮住源码的问题。旧测试版使用
+`overflow-guard::before`，位于 Monaco 绝对定位的内容视口之前，因此视口和源码锚点无法被引用，
+只能使用左上方的回退坐标。现在测试版改用外层 `monaco-editor::after`，正式版继续使用
+`overflow-guard::after`；两者都在源码之后，仍可独立开启、关闭。无需修改公式、缩进或 CSS 设置。
+
+The test build could place previews near the line numbers instead of their formulas, including multiline
+`align` environments. Its old `overflow-guard::before` layer preceded Monaco's absolutely positioned
+content viewport, preventing it from resolving viewport and source anchors. The test layer now uses
+`monaco-editor::after`; release keeps `overflow-guard::after`. Both follow the source content and remain
+independent. No changes to formulas, indentation, or CSS settings are required.
+
+布局依据：[CSS 锚点的先后关系](https://www.w3.org/TR/css-anchor-position-1/#acceptable-anchor-element)、
+[VS Code 编辑器视图结构](https://github.com/microsoft/vscode/blob/main/src/vs/editor/browser/view.ts)。
 
 ### 0.2.4：短结束行与未保存文件
 

@@ -52,7 +52,5 @@ MathJax 预览路径中执行。未定义命令仍保留错误标记，受限宏
 数量和估算大小上限。这些是缓存预算，不是整个 VS Code 进程的内存承诺。
 普通公式的尾部输入只读编辑点附近 128 字符，复用宏语义快照；更改声明才重新解析。
 
-手动验收样例：[11-siunitx.tex](../test/fixtures/manual/11-siunitx.tex)。
-
 实现对照：[MathJax 文本宏机制](https://docs.mathjax.org/en/v4.1/input/tex/extensions/textmacros.html)、
 [siunitx 官方说明](https://tug.ctan.org/macros/latex/contrib/siunitx/siunitx.pdf)。

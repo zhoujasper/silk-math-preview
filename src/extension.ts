@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 
 import { cmd, PRODUCT_NAME } from './core/channel';
 import { DefinitionWorkspace } from './vscode/definitionWorkspace';
+import { FileExclusions } from './vscode/fileExclusions';
 import { registerLanguageFeatures } from './vscode/languageFeatures';
-import { OcrController } from './vscode/ocrController';
+import { registerOcr } from './vscode/ocrActivation';
 import { PreviewController } from './vscode/previewController';
 import { StatusController } from './vscode/statusController';
 import { TikzService } from './vscode/tikzService';
@@ -11,7 +12,8 @@ import { TikzService } from './vscode/tikzService';
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel(PRODUCT_NAME);
   const definitions = new DefinitionWorkspace(context);
-  const status = new StatusController(context);
+  const exclusions = new FileExclusions(context.workspaceState);
+  const status = new StatusController(context, exclusions);
   const preview = new PreviewController(
     definitions,
     context.asAbsolutePath('dist/render-worker.js'),
@@ -19,11 +21,12 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
     new TikzService(context),
   );
-  const ocr = new OcrController(context);
+  const ocr = registerOcr(context);
 
   context.subscriptions.push(
     output,
     definitions,
+    exclusions,
     status,
     preview,
     ocr,
@@ -53,5 +56,5 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  registerLanguageFeatures(context, definitions);
+  registerLanguageFeatures(context, definitions, exclusions);
 }

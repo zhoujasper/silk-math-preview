@@ -17,7 +17,7 @@ const env = {
   SILK_PACKAGING: '1',
 };
 
-const build = spawnSync('npm', ['run', 'build'], { stdio: 'inherit', shell: true, env, cwd: root });
+const build = spawnSync(process.execPath, ['scripts/build.mjs'], { stdio: 'inherit', env, cwd: root });
 if (build.status !== 0) process.exit(build.status ?? 1);
 
 try {
@@ -25,12 +25,12 @@ try {
     writeFileSync(manifestPath, `${JSON.stringify(transformManifest(pkg, 'test'), null, 2)}\n`);
   }
   const packed = spawnSync(
-    'npx',
-    ['vsce', 'package', '--no-dependencies', '--out', out],
-    { stdio: 'inherit', shell: true, env, cwd: root },
+    process.execPath,
+    ['node_modules/@vscode/vsce/vsce', 'package', '--no-dependencies', '--out', out],
+    { stdio: 'inherit', env, cwd: root },
   );
-  if (packed.status !== 0) process.exit(packed.status ?? 1);
-  console.log(`packed ${out} (${channel})`);
+  if (packed.status !== 0) process.exitCode = packed.status ?? 1;
+  else console.log(`packed ${out} (${channel})`);
 } finally {
   writeFileSync(manifestPath, original);
 }

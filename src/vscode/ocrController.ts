@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import { cmd, COMMAND_NS, IS_TEST_CHANNEL, PRODUCT_NAME } from '../core/channel';
+import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
 import { fillTemplate, isCancelledMessage, uiCopy } from '../core/uiLocale';
 import { captureRegion, readClipboardImage } from '../ocr/captureService';
 import { OcrClient } from '../ocr/ocrClient';
@@ -19,7 +19,6 @@ type SourceItem = vscode.QuickPickItem & { readonly source: Source };
 export class OcrController implements vscode.Disposable {
   private readonly pack: OcrPackManager;
   private readonly client: OcrClient;
-  private readonly disposables: vscode.Disposable[] = [];
   private abort: AbortController | undefined;
   private input: vscode.QuickPick<SourceItem> | undefined;
   private resultPicker: vscode.QuickPick<vscode.QuickPickItem & { action: string }> | undefined;
@@ -29,19 +28,11 @@ export class OcrController implements vscode.Disposable {
   constructor(private readonly context: vscode.ExtensionContext) {
     this.pack = new OcrPackManager(join(context.globalStorageUri.fsPath, 'ocr', OCR_PACK_VERSION));
     this.client = new OcrClient(context.asAbsolutePath('dist/ocr-worker.js'), this.pack.rootPath);
-    this.disposables.push(
-      vscode.commands.registerCommand(cmd('ocr.capture'), () => this.launch('capture')),
-      vscode.commands.registerCommand(cmd('ocr.paste'), () => this.launch('paste')),
-      vscode.commands.registerCommand(cmd('ocr.openImage'), () => this.launch('file')),
-      vscode.commands.registerCommand(cmd('ocr.open'), () => this.showInput()),
-    );
-    this.registerImagePaste();
   }
   dispose(): void {
     this.disposed = true; this.abort?.abort(); this.client.dispose();
     this.input?.dispose(); this.resultPicker?.dispose();
     void vscode.commands.executeCommand('setContext', `${COMMAND_NS}.ocrInputVisible`, false);
-    for (const item of this.disposables) item.dispose();
   }
   private target(): InsertTarget | undefined {
     const active = vscode.window.activeTextEditor;
@@ -50,7 +41,7 @@ export class OcrController implements vscode.Disposable {
   private enabled(): boolean {
     return vscode.workspace.getConfiguration(COMMAND_NS).get('ocr.enabled', true);
   }
-  private showInput(): void {
+  public showInput(): void {
     this.input?.dispose();
     const copy = ocrCopy(vscode.env.language);
     const picker = vscode.window.createQuickPick<SourceItem>();
@@ -125,7 +116,7 @@ export class OcrController implements vscode.Disposable {
       } finally { cancel.dispose(); }
     });
   }
-  private async launch(source: Source): Promise<void> {
+  public async launch(source: Source): Promise<void> {
     if (this.disposed) return;
     this.input?.hide();
     if (!this.enabled()) {
@@ -208,28 +199,19 @@ export class OcrController implements vscode.Disposable {
     const editor = await vscode.window.showTextDocument(target.document, { preview: false });
     const end = target.document.positionAt(offset + text.length); editor.selection = new vscode.Selection(end, end);
   }
-  private registerImagePaste(): void {
-    // 较旧 VS Code 没有图片粘贴 Provider，仍可在识别菜单 Ctrl+V 或使用粘贴命令。
-    if (!vscode.languages.registerDocumentPasteEditProvider || !vscode.DocumentDropOrPasteEditKind) return;
-    const kind = vscode.DocumentDropOrPasteEditKind.Text.append(COMMAND_NS, 'latex');
-    this.disposables.push(vscode.languages.registerDocumentPasteEditProvider(
-      ['latex', 'tex', 'markdown', 'mdx'].map((language) => ({ language })),
-      { provideDocumentPasteEdits: async (_document, _ranges, data, _context, token) => {
-        if (!this.enabled() || !vscode.workspace.getConfiguration(COMMAND_NS).get('ocr.pasteImages', !IS_TEST_CHANNEL)
-          || this.abort || this.disposed || token.isCancellationRequested) return undefined;
-        const file = (data.get('image/png') ?? data.get('image/jpeg'))?.asFile();
-        if (!file) return undefined;
-        const abort = this.abort = new AbortController();
-        const cancel = token.onCancellationRequested(() => abort.abort());
-        try {
-          const result = await this.infer(await file.data(), 'formula', abort);
-          if (abort.signal.aborted || !result.text.trim()) return undefined;
-          if (!result.ok) void vscode.window.showWarningMessage(uiCopy(vscode.env.language).ocr.formulaIncomplete);
-          return [new vscode.DocumentPasteEdit(result.text, `${PRODUCT_NAME} · LaTeX`, kind)];
-        } catch (error) { this.showError(error); return undefined; }
-        finally { cancel.dispose(); if (this.abort === abort) this.abort = undefined; }
-      } },
-      { providedPasteEditKinds: [kind], pasteMimeTypes: ['image/png', 'image/jpeg'] },
-    ));
+  public async provideImagePaste(data: vscode.DataTransfer, token: vscode.CancellationToken,
+    kind: vscode.DocumentDropOrPasteEditKind): Promise<vscode.DocumentPasteEdit[] | undefined> {
+    if (!this.enabled() || this.abort || this.disposed || token.isCancellationRequested) return undefined;
+    const file = (data.get('image/png') ?? data.get('image/jpeg'))?.asFile();
+    if (!file) return undefined;
+    const abort = this.abort = new AbortController();
+    const cancel = token.onCancellationRequested(() => abort.abort());
+    try {
+      const result = await this.infer(await file.data(), 'formula', abort);
+      if (abort.signal.aborted || !result.text.trim()) return undefined;
+      if (!result.ok) void vscode.window.showWarningMessage(uiCopy(vscode.env.language).ocr.formulaIncomplete);
+      return [new vscode.DocumentPasteEdit(result.text, `${PRODUCT_NAME} · LaTeX`, kind)];
+    } catch (error) { this.showError(error); return undefined; }
+    finally { cancel.dispose(); if (this.abort === abort) this.abort = undefined; }
   }
 }

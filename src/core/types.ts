@@ -38,6 +38,8 @@ export interface MathRegion extends TextRange {
 }
 
 export interface MathScanOptions {
+  /** 默认包含表格与 TikZ 预览容器；补全只需要真正的数学区域。 */
+  readonly includePreviewContainers?: boolean;
   readonly language?: MathLanguage;
   readonly customMathEnvironments?: readonly string[];
   /** 有界 Markdown 片段起点已经位于 fenced code 内时的继承状态。 */
@@ -111,18 +113,4 @@ export interface DiagnosticOptions {
   readonly offset?: number;
   /** 在内置高置信表之外追加 typo -> command 映射，不包含反斜杠。 */
   readonly commandTypos?: Readonly<Record<string, string>>;
-}
-
-export type CompletionKind = 'command' | 'environment';
-
-export interface CompletionEntry {
-  readonly label: string;
-  readonly insertText: string;
-  readonly kind: CompletionKind;
-  readonly detail: string;
-}
-
-export interface CompletionCatalogOptions {
-  readonly customCommands?: readonly string[];
-  readonly customEnvironments?: readonly string[];
 }

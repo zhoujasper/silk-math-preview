@@ -1,6 +1,12 @@
 # Third-party notices
 
 Silk Math Preview bundles selected modules from MathJax 4 and the MathJax TeX font.
+The completion symbol table is extracted at build time from MathJax 4.1.3
+(Copyright 2017-2026 The MathJax Consortium; color mappings Copyright
+2018-2026 Omar Al-Ithawi and The MathJax Consortium). It contains names and glyphs,
+not an additional renderer. The extraction script and separately authored
+snippet templates are maintained in this repository.
+
 MathJax is licensed under the Apache License 2.0. See <https://www.mathjax.org/> and
 <https://github.com/mathjax/MathJax-src>.
 

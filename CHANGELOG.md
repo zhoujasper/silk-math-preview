@@ -1,5 +1,153 @@
 # 更新日志 / Changelog
 
+## 0.3.0 - 2026-09-11
+
+### 中文
+
+- 汇总 0.2.9–0.2.16 的本地改进并统一发布为 0.3.0，提供正式与测试两个独立通道安装包；保留现有设置与用户快捷键，README 继续提供全部 11 种语言。
+- 数学补全支持按语言选择 `on`、`off`、严格 `manual`，与预览独立。命令升级为参数 snippet，支持文档宏、宏包候选、环境、公式内标签/引用/文献键及自定义模板；已有参数与未保存修改得到保留。补全限定公式范围，不扩展到正文或图片路径。
+- 状态栏提供数学补全模式设置，以及覆盖全部 31 个公开操作的快捷键管理入口；截图、识图、缩放、暂停等操作均可自行改键。严格手动补全使用 Silk 的触发命令，专用按键仅在 `manual` 下生效；普通输入不会意外启动 Silk 补全。
+- 预览与补全分别支持 `*.tex`、文件名和相对/绝对路径排除规则，也可单独排除或恢复当前文件的预览、补全或两者。规则通过直接编辑菜单增删改，空列表始终可添加；支持用户、工作区、文件夹与语言范围，保留旧类型规则和 Notebook 行为。
+- 修复测试版多行公式预览偏入行号区，以及光标停留于表尾 `\\` 后或 `\hline` 前后时多出一行的问题。修复排除设置入口空白、外部恢复文件后排除状态未同步，以及无参数暂停命令行为错误。
+- OCR 与设置编辑按需加载，预览/补全共享扫描模块，界面共用翻译；复用有界补全文本、配置和模板缓存，减少重复读取与序列化。采用 UTF-8 构建，修改 OCR/补全设置不再清空预览图片。保留安装包与启动代码的体积检查。
+- 按维护要求移除测试源码和内部材料的 Git 跟踪，保留公开使用指南；提交、推送和 CI 检查发布文件边界，VSIX 使用明确允许列表。GitHub 自动发布保留中英双语说明和两份安装包；关闭 Marketplace 自动发布，由维护者手动上传。
+- 严格手动模式需要绑定 Silk 命令，其他扩展仍可能贡献重复候选；动态引用和部分复杂 TeX 定义仍有边界，不宣称完整替代 LaTeX Workshop。验证范围为本机逻辑、构建、渲染与包内容，未新增实机快捷键或 Extension Host 图形界面验收。
+
+### English
+
+- Consolidate the local improvements from 0.2.9–0.2.16 into 0.3.0, with separate release and test installers. Preserve existing settings and user keybindings, and retain all 11 README languages.
+- Add per-language `on`, `off`, and strict `manual` math completion independently of preview. Provide argument snippets, document macros, package candidates, environments, formula-local labels/references/citation keys, and custom templates. Preserve existing arguments and unsaved edits. Keep completion inside formulas rather than prose or image paths.
+- Expose completion mode settings and shortcut management for all 31 public actions, including capture, image recognition, scaling, and pauses. Strict manual completion uses Silk’s trigger command, with dedicated keys active only in `manual`; ordinary typing does not unexpectedly start Silk completion.
+- Configure preview and completion exclusions independently with `*.tex`, filenames, and relative/absolute paths, or exclude/restore preview, completion, or both for the current file. A direct rule menu supports adding, editing, and deleting even from an empty list, with User/Workspace/Folder and language scopes, legacy type rules, and notebook support.
+- Fix test-build multiline previews drifting into the gutter and an extra table row when the caret follows the final `\\` or surrounds a trailing `\hline`. Fix empty exclusion settings navigation, stale exclusions after external file restoration, and incorrect parameterless pause behavior.
+- Load OCR and settings editing on demand, share scanning between preview/completion, and share UI translations. Reuse bounded completion text, configuration, and template caches to reduce repeated reads and serialization. Emit UTF-8 bundles and retain preview images when OCR/completion preferences change. Keep installer and startup-code size checks.
+- Remove tests and internal materials from Git tracking as requested, while retaining public usage guides. Check publication boundaries before commits, pushes, and in CI; package VSIX files with an explicit allowlist. Keep bilingual GitHub releases with both installers, and disable automatic Marketplace publishing in favor of manual maintainer uploads.
+- Strict manual mode requires the Silk command; other extensions may still contribute duplicate candidates. Dynamic references and some complex TeX definitions remain limited, without claiming to replace all of LaTeX Workshop. Verification covers local logic, builds, rendering, and package contents, without new physical-keyboard or Extension Host GUI acceptance checks.
+
+## 0.2.16 - 2026-09-11
+
+### 中文
+
+- 修复文件排除入口打开空白设置搜索页的问题：改用直接编辑菜单，空列表也显示预览/补全的添加入口；支持编辑、清空删除、用户/工作区/文件夹和语言范围，保留旧类型规则、保存失败提示及设置更新延迟保护。
+- 新增“修改各项快捷键…”入口，列出全部公开操作并准确定位 VS Code 的对应命令；截图等没有默认按键的操作也能绑定。补齐关闭预览的命令名称，修复无参数暂停命令，提供独立的暂停 30 分钟/结束暂停命令；文件类型开关自动使用当前文件。保留默认与用户键位，数学补全专用触发仍仅限 `manual`。
+- 截图/OCR 控制器与设置编辑模块按需加载；主扩展与可选模块共享界面翻译，预览与补全共享公式扫描。构建使用 UTF-8 文本减少冗长的 Unicode 转义。补全复用有界的文档文本与配置缓存，避免同次请求多次读取全文，以及每次请求序列化整套自定义模板。修改 OCR/补全设置不再清空预览图片缓存。
+- 打包脚本直接调用本地 Node 工具，减少子进程；失败后也恢复正式通道清单。补充启动模块合计体积检查，保留主模块与安装包的原有上限；同步 11 种 README 语言及双语使用说明。
+
+### English
+
+- Fix the file exclusion entry opening an empty Settings search. Use a direct rule menu with preview/completion Add actions even when empty. Support editing, clearing to delete, User/Workspace/Folder and language scopes, legacy type rules, save errors, and delayed configuration updates.
+- Add “All keyboard shortcuts…” to list every public action and open its exact VS Code command. Actions without default keys, including capture, can also be bound. Name Dismiss Preview, fix parameterless pause, add separate 30-minute pause/resume commands, and make the file-type toggle use the active file. Preserve defaults and user bindings; Silk’s dedicated completion trigger remains limited to `manual`.
+- Load capture/OCR controls and settings editing on demand. Share translations across UI modules and math scanning between preview and completion. Emit UTF-8 text to reduce verbose Unicode escapes. Reuse bounded document text and configuration caches, avoid repeated full-document reads within a request, and stop serializing all custom templates on every request. OCR/completion preference changes no longer clear preview images.
+- Run local Node tools directly when packaging, reducing child processes and restoring the release manifest even on failure. Check the combined startup module size while retaining existing main-module and installer limits. Update all 11 README languages and the bilingual usage guide.
+
+## 0.2.15 - 2026-09-11
+
+### 中文
+
+- 新增“编辑文件排除规则…”菜单及命令，直接打开预览和补全的独立文件规则列表；支持 `*.tex`、指定文件名、工作区相对路径、绝对路径及 `*` / `?` / 整段 `**`，默认空列表。旧文件类型设置继续生效，存在非空配置时也会显示在编辑入口中。
+- 文件恢复操作改用恢复图标，菜单显示仍生效的具体排除规则。同步 VS Code 更新后的工作区排除记录，避免外部恢复后仍使用旧缓存；保留快速操作的串行保存和失败回滚，不主动添加或清空用户的排除记录。
+- 文件匹配模块仅在配置了规则时加载，按文档缓存结果；配置、语言、路径或 Notebook 归属变化后更新，不扫描目录。更新 11 种界面/README 语言与双语补全指南。
+
+### English
+
+- Add “Edit file exclusion rules…” to the menu and Command Palette, opening independent preview/completion file-rule lists. Support `*.tex`, specific filenames, workspace-relative and absolute paths, and `*` / `?` / whole-segment `**`; lists default to empty. Existing file-type settings still apply and also appear in the editing entry when configured.
+- Use a restore icon for file restoration and show a specific rule that still excludes the file. Observe updated VS Code workspace exclusion records instead of retaining stale state after an external restore. Keep serialized saves and failure rollback for rapid actions, without automatically adding or clearing user exclusions.
+- Load file matching only when rules are configured and cache results by document. Refresh after configuration, language, path, or notebook-association changes, without scanning directories. Update all 11 UI/README languages and the bilingual completion guide.
+
+## 0.2.14 - 2026-09-11
+
+### 中文
+
+- 新增独立的 `preview.excludeFileTypes` 与 `completion.excludeFileTypes` 设置，按扩展名或 VS Code 语言 ID 排除预览、数学补全，默认空列表；支持用户、工作区、文件夹与语言覆盖，Notebook 按所属文件判断。
+- 当前文件菜单拆分为预览、补全、两者三个排除/恢复操作，各自立即生效并保存在本地工作区状态中。旧排除记录继续只影响预览；恢复文件不会覆盖文件类型规则、预览开关或补全模式，菜单会提示仍生效的类型排除。
+- 排除补全时同时禁止自动与手动候选，撤销待处理请求并释放补全工程索引；单独排除预览不会关闭补全，单独排除文件补全不会清除预览。缓存文件类型判断，配置变化时失效。
+- 清除未使用的旧悬浮菜单渲染代码和说明文字，更新 11 种界面/README 语言及双语指南；正式与测试版的配置、命令和文件排除记录相互独立。
+
+### English
+
+- Add independent `preview.excludeFileTypes` and `completion.excludeFileTypes` settings to exclude preview or math completion by extension or VS Code language ID. Both default to empty lists and support user, workspace, folder, and language overrides. Notebook cells use their parent file.
+- Split current-file actions into preview, completion, and combined exclusion/restore controls. Changes apply immediately and persist in local workspace state. Existing exclusions retain their preview-only meaning. Restoring a file does not override type rules, preview switches, or completion mode; the menu indicates remaining type exclusions.
+- Completion exclusions block automatic and manual candidates, invalidate pending requests, and release the completion project index. Excluding preview leaves completion available; excluding a file's completion leaves its preview intact. Cache file-type decisions and invalidate them when configuration changes.
+- Remove unused legacy hover-menu rendering and copy. Update all 11 UI/README languages and the bilingual guide, keeping release/test settings, commands, and file exclusion records separate.
+
+## 0.2.13 - 2026-09-11
+
+### 中文
+
+- 修复表格预览在光标停留于最后一个 `\\` 之后、末尾 `\hline` 前后或附近空白处时多出一行的问题：仅由预览光标构成的末行不再被当作表格内容，保留末尾横线及双横线。
+- 单元格内的光标继续显示；已输入的文字、公式及用 `&` 开始的单元格保持不变。边界判断复用表格行解析，只处理末行，不修改文档源码。
+
+### English
+
+- Fix an extra preview row when the caret rests after the final `\\`, before or after a trailing `\hline`, or in nearby whitespace. A trailing row containing only the preview caret no longer counts as table content; keep bottom rules and double rules intact.
+- Keep the caret visible inside cells and preserve entered text, formulas, and cells started with `&`. Reuse table row parsing and check only the final row, without changing the source document.
+
+## 0.2.12 - 2026-09-11
+
+### 中文
+
+- 状态栏菜单新增“数学补全模式…”并显示当前语言和生效模式；点击直接打开该语言的 VS Code 补全模式设置，下拉选择 `on`、`off` 或 `manual`。命令面板也可打开此设置，补全与预览继续独立。
+- 修正 0.2.11 的快捷键范围：Silk 专用触发按键、命令及改键入口仅在 `manual` 下启用；`on` 保持自动补全与 VS Code 原有按键行为，`off` 不提供 Silk 候选。兼容 0.2.11 复制的自定义按键条件，同样限制为手动模式。
+- README 与菜单的 11 种语言、双语补全指南同步说明设置位置、自动触发方式及手动按键范围；改键菜单文字缩短，正式与测试通道保持隔离。
+- 修复测试版的多行公式预览偏到左上角、压住行号区的问题：预览层移到正文布局之后，使视口和源码坐标可被正确引用；覆盖独立 `align` 环境及数学分隔符内的环境，正式与测试版仍独立显示。
+
+### English
+
+- Add “Math completion mode…” to the status menu, showing the current language and effective mode. Open that language's VS Code setting directly and select `on`, `off`, or `manual` from the dropdown. The Command Palette can open the setting too; preview remains independent.
+- Correct the shortcut scope introduced in 0.2.11: enable Silk's dedicated trigger keys, command, and shortcut settings entry only in `manual`. Preserve automatic completion and native VS Code key behavior in `on`; provide no Silk items in `off`. Custom key conditions copied from 0.2.11 remain compatible, now restricted to manual mode as well.
+- Update all 11 README and menu languages and the bilingual completion guide with the setting location, automatic triggers, and manual shortcut scope. Shorten the shortcut menu labels and keep release and test channels separate.
+- Fix multiline formula previews drifting into the top-left gutter in the test build. Move its overlay after the source layout so viewport and source coordinates can be resolved, covering standalone `align` environments and environments inside math delimiters while preserving separate release/test overlays.
+
+## 0.2.11 - 2026-09-11
+
+### 中文
+
+- 状态栏菜单新增“修改数学补全快捷键…”入口，直接打开并定位 VS Code 的数学补全按键设置；命令面板也可打开此设置。菜单和 README 的 11 种语言同步更新。
+- 默认 `Ctrl+Space`、自定义快捷键和 Silk 数学补全命令在 `on` 与 `manual` 模式下均可使用；`off` 不提供 Silk 候选。列表打开时保留 VS Code 的原有按键操作，正式版与测试版保持独立命令和按键。
+- 避免后台打开文件或后台编辑器选区变化打断当前手动补全；调用失败时清除此次请求，保留文档、位置、版本及过期检查，普通输入仍不会启动严格手动补全。
+
+### English
+
+- Add “Change math completion shortcut…” to the status menu, opening VS Code's keybinding settings filtered to the math completion command. The settings entry is also available in the Command Palette. Update all 11 menu and README languages.
+- Make default `Ctrl+Space`, custom shortcuts, and the Silk math completion command available in both `on` and `manual`; `off` provides no Silk items. Preserve VS Code's existing key behavior while the list is open, with separate commands and shortcuts for release and test builds.
+- Keep background document opens and inactive editor selection changes from interrupting manual completion. Clear a request when invocation fails while retaining document, position, version, and expiry checks; ordinary typing still does not start strict manual completion.
+
+## 0.2.10 - 2026-09-10
+
+### 中文
+
+- 补全候选复用排序和匹配信息，只为当前选中的候选生成详细说明；一次请求共用替换范围，减少输入时的对象创建和重复计算。
+- 公式扫描直接跳到分隔符、注释和代码标记；普通正文提前跳过补全与诊断的定义读取，相同版本与定义下的诊断复用结果。
+- 公式引用索引复用完整查询结果，无关文件编辑不会取消当前索引；保留未保存内容、依赖变更和缺失文件创建时的更新，闲置 60 秒释放索引与监听器。
+- 清除自动测试、一次性验证脚本、过期报告及旧文字补全代码，移除测试依赖。内部工作记录只留本地；增加 Git 提交、推送和 CI 的文件范围检查，VSIX 改用明确的文件允许列表。公开使用说明和运行所需资源保留。
+
+### English
+
+- Reuse completion sorting and matching metadata, generate detailed documentation only for the focused item, and share the replacement range within a request to reduce allocations and repeated work while typing.
+- Scan directly to delimiters, comments and code markers. Skip definition reads for ordinary prose and reuse diagnostics when the document version and definition context are unchanged.
+- Reuse complete formula-reference index results without cancelling them for unrelated edits. Preserve updates for unsaved content, dependency changes and newly created missing files; release the index and watchers after 60 seconds of inactivity.
+- Remove automated tests, one-off validation scripts, obsolete reports, legacy text completion code and test dependencies. Keep internal work notes local; add commit, push and CI file checks and an explicit VSIX allowlist. Retain public usage guides and required runtime resources.
+
+## 0.2.9 - 2026-09-10
+
+### 中文
+
+- 新增按语言覆盖的 `silkMath.completion.mode`：`on`（默认）、`off`、严格 `manual`，关闭补全不影响预览。手动模式通过 `Ctrl+Space` 或 `silkMath.triggerCompletion` 提供候选；自定义快捷键需绑定 Silk 命令，避免 VS Code 将普通输入也标记为 Invoke 导致意外自动补全。
+- 数学命令升级为参数 snippet，补充分式、根式、字体、重音、积分/求和上下限、配对定界符和数学环境。已有参数与命令后缀得到保留；可选参数变体可关闭，自定义 snippet 可覆盖或隐藏命令。
+- 词库在构建时从固定 MathJax 4.1.3 提取，补全模块按需加载，不引入渲染器。宏包候选遵循声明或显式配置；文档重新定义的命令优先，保留未保存的依赖宏、参数默认值和复杂定义限制。
+- 公式内增加标签、引用和文献键补全：读取当前文档、可达章节、文本 notebook 单元格、已声明的本地 `.bib` 和 `bibitem`，支持前向引用、未保存修改、标题/作者/年份、逗号列表及不重名的新标签。索引按需创建并有文件和内存上限。
+- 补全请求取消、文档变化、配置关闭或定义失效后拒绝迟到结果；不在普通正文、图片路径、注释和 Markdown 代码中扩展补全。README 全部 11 种语言同步说明，增加中英使用文档与 issue 源码对照记录。
+- 本轮仅做本机类型、单元回归、构建、性能和双通道 VSIX 检查；未启动浏览器或 Extension Host。原生 Trigger Suggest 的所有入口无法由公开 API 区分，严格 manual 需要 Silk 命令；其他扩展的候选仍可能重复，动态引用及部分 TeX 命令仍有限制，不宣称完整替代 LaTeX Workshop。
+
+### English
+
+- Add language-overridable `silkMath.completion.mode`: `on` (default), `off`, and strict `manual`, independently of preview. Manual completion uses `Ctrl+Space` or `silkMath.triggerCompletion`; custom bindings must call the Silk command because VS Code also marks ordinary typing as Invoke.
+- Upgrade math commands to argument snippets for fractions, roots, fonts, accents, integral/sum limits, paired delimiters, and math environments. Preserve existing arguments and command suffixes; optional-argument variants can be disabled, and custom snippets can override or hide commands.
+- Extract the symbol catalog at build time from pinned MathJax 4.1.3, and load completion code on demand without importing a renderer. Package candidates follow declarations or explicit configuration. Document redefinitions take precedence, with unsaved dependency macros, optional defaults, and complex-definition limitations preserved.
+- Add formula-local label, reference, and citation key completion from the current document, reachable chapters, notebook markup cells, declared local `.bib` files, and `bibitem` entries. Support forward references, unsaved changes, title/author/year details, comma lists, and new unique labels. Create the index on demand with file and memory limits.
+- Reject stale completion results after cancellation, document changes, configuration changes, or definition invalidation. Do not expand completion into prose, image paths, comments, or Markdown code. Update all 11 README languages and add a Chinese/English guide and source comparison record.
+- Verification is limited to local types, unit regressions, builds, performance, and both VSIX channels; no browser or Extension Host was launched. The public API cannot distinguish all native Trigger Suggest entry points, so strict manual requires the Silk command. Other extensions may still offer duplicate items; dynamic references and some TeX commands remain limited. This is not a claim of fully replacing LaTeX Workshop.
+
 ## 0.2.8 - 2026-09-09
 
 ### 中文

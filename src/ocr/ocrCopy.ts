@@ -2,7 +2,7 @@ import { resolveUiLocale } from '../core/uiLocale';
 
 const EN = {
   input: 'Recognize image', capture: 'Select screen region', paste: 'Paste image', upload: 'Choose image…',
-  inputHint: 'Select a region, paste an image, or choose a PNG / JPEG', pasteHint: 'Ctrl+V / ⌘V',
+  inputHint: 'Select a region, paste an image, or choose a PNG / JPEG', pasteHint: 'Configurable in keyboard shortcuts',
   working: 'Recognizing image…', busy: 'Recognition is running. Use Cancel in the progress notification to stop it.',
   result: 'LaTeX ready', edit: 'Edit result…', again: 'Recognize as…', editHint: 'Review the result; Enter to continue',
   emptyClipboard: 'No image in the clipboard. Copy an image or choose a PNG / JPEG.',
@@ -18,7 +18,7 @@ const EN = {
 type Copy = typeof EN;
 const ZH: Copy = {
   input: '识别图片', capture: '框选屏幕区域', paste: '粘贴图片', upload: '选择图片…',
-  inputHint: '框选截图、粘贴图片，或选择 PNG / JPEG', pasteHint: 'Ctrl+V / ⌘V',
+  inputHint: '框选截图、粘贴图片，或选择 PNG / JPEG', pasteHint: '可在快捷键设置中修改',
   working: '正在识别图片…', busy: '正在识别，可在进度提示中点击取消。',
   result: 'LaTeX 识别完成', edit: '编辑结果…', again: '切换识别类型…', editHint: '检查识别结果，按 Enter 继续',
   emptyClipboard: '剪贴板里没有图片，请先复制图片或选择 PNG / JPEG 文件。',
@@ -33,7 +33,7 @@ const ZH: Copy = {
 };
 const ZHT: Copy = {
   input: '辨識圖片', capture: '框選螢幕區域', paste: '貼上圖片', upload: '選擇圖片…',
-  inputHint: '框選截圖、貼上圖片，或選擇 PNG / JPEG', pasteHint: 'Ctrl+V / ⌘V',
+  inputHint: '框選截圖、貼上圖片，或選擇 PNG / JPEG', pasteHint: '可在快速鍵設定中修改',
   working: '正在辨識圖片…', busy: '正在辨識，可在進度提示中按取消。',
   result: 'LaTeX 辨識完成', edit: '編輯結果…', again: '切換辨識類型…', editHint: '檢查辨識結果，按 Enter 繼續',
   emptyClipboard: '剪貼簿裡沒有圖片，請先複製圖片或選擇 PNG / JPEG 檔案。',

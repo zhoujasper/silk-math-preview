@@ -2,7 +2,7 @@
   "name": "silk-math-preview",
   "displayName": "Silk Math Preview",
   "description": "Live math preview that follows your caret. Inline LaTeX, Markdown, Jupyter, and MathJax equations with no compile step. 光标走到哪，公式就在哪渲染。",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "publisher": "silkmath",
   "author": {
     "name": "Jasper Zhou",
@@ -144,19 +144,31 @@
       },
       {
         "command": "silkMath.toggleLanguage",
-        "title": "Silk Math: 切换文件类型预览 / Toggle Language Preview"
+        "title": "Silk Math: 切换当前文件类型的预览 / Toggle Preview for Current File Type"
       },
       {
         "command": "silkMath.togglePreviewDefinitions",
         "title": "Silk Math: 切换定义预览 / Toggle Definition Preview"
       },
       {
+        "command": "silkMath.editFileExclusions",
+        "title": "Silk Math: Edit File Exclusion Rules… / 编辑文件排除规则…"
+      },
+      {
         "command": "silkMath.toggleExcludeFile",
-        "title": "Silk Math: 排除或恢复当前文件 / Toggle Exclude Current File"
+        "title": "Silk Math: 排除或恢复当前文件预览 / Toggle Preview Exclusion for Current File"
+      },
+      {
+        "command": "silkMath.toggleExcludeCompletion",
+        "title": "Silk Math: 排除或恢复当前文件补全 / Toggle Completion Exclusion for Current File"
+      },
+      {
+        "command": "silkMath.toggleExcludeBoth",
+        "title": "Silk Math: 排除或恢复当前文件预览和补全 / Toggle Both Exclusions for Current File"
       },
       {
         "command": "silkMath.snooze",
-        "title": "Silk Math: 暂停预览 / Snooze Preview"
+        "title": "Silk Math: 暂停预览 5 分钟 / Pause Preview for 5 Minutes"
       },
       {
         "command": "silkMath.openSettings",
@@ -185,8 +197,51 @@
       {
         "command": "silkMath.editPreviewCss",
         "title": "Silk Math: 编辑预览 CSS / Edit Preview CSS"
+      },
+      {
+        "command": "silkMath.triggerCompletion",
+        "title": "Silk Math: 触发数学补全 / Trigger Math Completion",
+        "enablement": "silkMath.manualCompletion"
+      },
+      {
+        "command": "silkMath.configureCompletionShortcut",
+        "title": "Silk Math: 修改数学补全快捷键 / Change Math Completion Shortcut",
+        "enablement": "silkMath.manualCompletion"
+      },
+      {
+        "command": "silkMath.configureCompletionMode",
+        "title": "Silk Math: 设置数学补全模式 / Set Math Completion Mode"
+      },
+      {
+        "command": "silkMath.configureShortcuts",
+        "title": "Silk Math: 修改各项快捷键 / Configure All Keyboard Shortcuts"
+      },
+      {
+        "command": "silkMath.dismissPreview",
+        "title": "Silk Math: 关闭当前预览 / Dismiss Current Preview",
+        "enablement": "silkMath.previewVisible"
+      },
+      {
+        "command": "silkMath.snooze30Minutes",
+        "title": "Silk Math: 暂停预览 30 分钟 / Pause Preview for 30 Minutes"
+      },
+      {
+        "command": "silkMath.resumePreview",
+        "title": "Silk Math: 结束暂停 / Resume Preview"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "silkMath.triggerCompletion",
+          "when": "silkMath.manualCompletion"
+        },
+        {
+          "command": "silkMath.configureCompletionShortcut",
+          "when": "silkMath.manualCompletion"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "silkMath.togglePreview",
@@ -220,6 +275,12 @@
         "key": "ctrl+alt+v",
         "mac": "cmd+alt+v",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "silkMath.triggerCompletion",
+        "key": "ctrl+space",
+        "mac": "ctrl+space",
+        "when": "editorTextFocus && !editorReadonly && silkMath.manualCompletion && !suggestWidgetVisible"
       }
     ],
     "configuration": {
@@ -346,6 +407,108 @@
           "maxLength": 8192,
           "editPresentation": "multilineText",
           "markdownDescription": "预览 CSS：Silk Math → 编辑预览 CSS，保存生效；支持光标/选区/公式定位、上下/右侧、行间隔、字号、偏移、防覆盖与外观，清空恢复默认。Preview CSS: anchor to caret, selection or formula; choose above/below/right, line gaps, font size, offsets, overlap and appearance. Save to apply; clear to reset."
+        },
+        "silkMath.completion.mode": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off",
+            "manual"
+          ],
+          "default": "on",
+          "scope": "language-overridable",
+          "enumDescriptions": [
+            "自动与手动补全。Automatic and manual completion.",
+            "完全关闭此语言的 Silk 补全，不影响预览。Disable Silk completion in this language; preview is unaffected.",
+            "严格手动：Ctrl+Space 或 Silk Math: Trigger Math Completion；自定义快捷键需绑定 silkMath.triggerCompletion。Strict manual: use Ctrl+Space or Silk Math: Trigger Math Completion; bind custom shortcuts to silkMath.triggerCompletion."
+          ],
+          "markdownDescription": "数学补全模式。可在 `[latex]`、`[tex]`、`[markdown]`、`[mdx]` 中分别配置。Math completion mode; supports per-language overrides independently of preview."
+        },
+        "silkMath.completion.optionalArguments": {
+          "type": "boolean",
+          "default": true,
+          "scope": "language-overridable",
+          "description": "显示可选参数与必选参数不同的 snippet 变体。Show distinct optional-argument snippet variants."
+        },
+        "silkMath.completion.packages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "mathtools",
+              "physics",
+              "braket",
+              "upgreek"
+            ]
+          },
+          "default": [],
+          "scope": "language-overridable",
+          "description": "为 Markdown 等没有导言区的文档补充宏包候选；只控制补全，不加载渲染宏包。Add package completions for documents without a preamble; this does not load rendering packages."
+        },
+        "silkMath.completion.snippets": {
+          "type": "object",
+          "default": {},
+          "scope": "language-overridable",
+          "maxProperties": 256,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "markdownDescription": "自定义命令名 → 完整 VS Code snippet（含反斜杠）；空字符串隐藏该命令。Custom command name → complete VS Code snippet including its backslash; an empty string hides the command. Overrides built-in and document snippets."
+        },
+        "silkMath.preview.excludeFileTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^(?:\\*?\\.)?[A-Za-z0-9][A-Za-z0-9._+-]*$"
+          },
+          "default": [],
+          "uniqueItems": true,
+          "maxItems": 64,
+          "scope": "language-overridable",
+          "markdownDescription": "排除指定文件类型的预览。填写扩展名（`.tex`、`.md`、`*.ipynb`）或 VS Code 语言 ID（`latex`、`markdown`），不区分大小写。空列表不按类型排除。Notebook 按所属文件判断。文件恢复按钮不会覆盖此规则。Exclude preview by extension (`.tex`, `.md`, `*.ipynb`) or VS Code language ID (`latex`, `markdown`), case-insensitively. Empty means no type exclusions. Notebook cells use their parent file. Restoring a file does not override these rules."
+        },
+        "silkMath.completion.excludeFileTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^(?:\\*?\\.)?[A-Za-z0-9][A-Za-z0-9._+-]*$"
+          },
+          "default": [],
+          "uniqueItems": true,
+          "maxItems": 64,
+          "scope": "language-overridable",
+          "markdownDescription": "排除指定文件类型的数学补全（包括手动补全）。填写扩展名（`.tex`、`.md`、`*.ipynb`）或 VS Code 语言 ID（`latex`、`markdown`），不区分大小写。空列表不按类型排除。Notebook 按所属文件判断。文件恢复按钮不会覆盖此规则。Exclude math completion, including manual completion by extension (`.tex`, `.md`, `*.ipynb`) or VS Code language ID (`latex`, `markdown`), case-insensitively. Empty means no type exclusions. Notebook cells use their parent file. Restoring a file does not override these rules."
+        },
+        "silkMath.preview.excludeFiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "default": [],
+          "uniqueItems": true,
+          "maxItems": 64,
+          "scope": "language-overridable",
+          "markdownDescription": "排除文件的预览。每项一条规则：`*.tex` 排除所有 TeX 文件；`notes.tex` 排除任意目录中同名文件；`chapters/draft.tex` 相对于工作区文件夹；绝对路径仅排除该路径；`**/*.tex` 匹配任意层级。支持 `*`、`?`、整段 `**`，不区分大小写，路径可用 `/` 或 `\\`。留空不添加规则。Notebook 按所属文件判断；单文件恢复按钮不会覆盖规则。Exclude preview by filename or path. Use `*.tex` for every TeX file, `notes.tex` for that name anywhere, `chapters/draft.tex` relative to the workspace folder, or an absolute path for one specific file. Supports `*`, `?`, and whole-segment `**`, case-insensitively; either path separator is accepted. Empty adds no rules. Notebook cells use their parent file. Restoring a file does not override rules."
+        },
+        "silkMath.completion.excludeFiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "default": [],
+          "uniqueItems": true,
+          "maxItems": 64,
+          "scope": "language-overridable",
+          "markdownDescription": "排除文件的补全（含手动补全）。每项一条规则：`*.tex` 排除所有 TeX 文件；`notes.tex` 排除任意目录中同名文件；`chapters/draft.tex` 相对于工作区文件夹；绝对路径仅排除该路径；`**/*.tex` 匹配任意层级。支持 `*`、`?`、整段 `**`，不区分大小写，路径可用 `/` 或 `\\`。留空不添加规则。Notebook 按所属文件判断；单文件恢复按钮不会覆盖规则。Exclude completion (including manual completion) by filename or path. Use `*.tex` for every TeX file, `notes.tex` for that name anywhere, `chapters/draft.tex` relative to the workspace folder, or an absolute path for one specific file. Supports `*`, `?`, and whole-segment `**`, case-insensitively; either path separator is accepted. Empty adds no rules. Notebook cells use their parent file. Restoring a file does not override rules."
         }
       }
     }
@@ -355,20 +518,14 @@
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "coverage": "vitest run --coverage",
-    "benchmark": "node scripts/benchmark.mjs",
-    "validate:ocr-pack": "node scripts/validate-ocr-pack.mjs",
-    "validate:ocr-accuracy": "node scripts/validate-ocr-accuracy.mjs",
+    "check:completion-data": "node scripts/generate-completion-symbols.mjs --check",
     "check:size": "node scripts/check-size.mjs",
-    "verify": "npm run typecheck && npm run coverage && npm run build && npm run benchmark && npm run check:size",
+    "verify": "npm run check:repository && npm run check:completion-data && npm run typecheck && npm run build && npm run check:size && node scripts/release-notes.mjs > /dev/null",
     "package:release": "node scripts/package-channel.mjs release",
     "package:test": "node scripts/package-channel.mjs test",
     "package:all": "npm run package:release && npm run package:test",
     "package": "npm run verify && npm run package:all && npm run check:size",
-    "validate:tikz": "node scripts/validate-tikz.mjs",
-    "benchmark:tikz": "node scripts/benchmark-tikz.mjs",
-    "stress:tikz": "node scripts/stress-tikz.mjs"
+    "check:repository": "node scripts/check-publication.mjs"
   },
   "devDependencies": {
     "@mathjax/mathjax-tex-font": "4.1.3",
@@ -376,7 +533,6 @@
     "@types/node": "^22.0.0",
     "@types/opentype.js": "1.3.8",
     "@types/vscode": "^1.85.0",
-    "@vitest/coverage-v8": "^4.0.0",
     "@vscode/vsce": "^3.9.2",
     "@xmldom/xmldom": "^0.9.11",
     "esbuild": "^0.28.2",
@@ -385,7 +541,6 @@
     "opentype.js": "1.3.4",
     "ppu-paddle-ocr": "5.8.3",
     "pureimage": "0.4.20",
-    "typescript": "^5.9.0",
-    "vitest": "^4.0.0"
+    "typescript": "^5.9.0"
   }
 }
