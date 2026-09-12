@@ -173,6 +173,7 @@ export interface PreviewGeometry {
   readonly sourceStart: string;
   readonly sourceEnd: string;
   readonly sourceRight: readonly string[];
+  readonly editing?: string;
   readonly caretAtEnd?: boolean;
 }
 
@@ -523,16 +524,31 @@ function advancedPreviewLayout(
       ? `clamp(${top}, ${desired}, calc(${vp('bottom')} - var(--silk-panel-height) - 4px))`
       : `max(${top}, min(${desired}, calc(${vp('bottom')} - var(--silk-panel-height) - 4px)), ${protectedEdge})`;
   }
+  // 即使允许覆盖公式的其他行，也不能把图片夹回当前输入位置。
+  // 同时约束相对的两个边，让空间不足时收缩盒子，而不是跨过保护边。
+  if (geometry.editing) {
+    const guard = Math.max(gap, lineHeight * 0.5) + insets.vertical;
+    if (placement === 'above') {
+      top = `calc(${vp('top')} + 4px)`;
+      bottom = `max(${bottom}, calc(${a(geometry.editing, 'top', lineHeight)} + ${guard}px))`;
+    } else if (placement === 'below') {
+      top = `max(${top}, calc(${a(geometry.editing, 'bottom', lineHeight)} + ${guard}px))`;
+    } else {
+      left = `max(${left}, calc(${a(geometry.editing, 'right', 0)} + ${Math.max(gap, lineHeight * 0.5)}px))`;
+    }
+  }
   // Above 的 max-height 生效后用 auto 上边距吸收空白，让盒子贴着 bottom。
   return {
-    placement, width: overlap ? 'var(--silk-panel-width)' : 'auto', height: overlap ? 'var(--silk-panel-height)' : 'auto',
+    placement,
+    width: overlap && !(geometry.editing && placement === 'right') ? 'var(--silk-panel-width)' : 'auto',
+    height: overlap && !(geometry.editing && placement !== 'right') ? 'var(--silk-panel-height)' : 'auto',
     textDecoration: [
       'none', 'position: absolute', `position-anchor: ${viewport}`,
       ...variables,
       `left: ${left}`, `right: ${right}`, `top: ${top}`, `bottom: ${bottom}`,
       'min-width: 0', 'min-height: 0', 'box-sizing: border-box',
       'max-width: var(--silk-panel-width)', 'max-height: var(--silk-panel-height)',
-      ...(placement === 'above' && !overlap ? ['margin-top: auto !important'] : []),
+      ...(placement === 'above' && (!overlap || geometry.editing) ? ['margin-top: auto !important'] : []),
       // 覆盖 contentIconPath 的替换内容，保留零字符宽度的真实图片盒子。
       "content: '' !important", `background-image: url('${input.imageUri}')`,
       'background-size: contain', 'background-repeat: no-repeat', 'background-position: center',

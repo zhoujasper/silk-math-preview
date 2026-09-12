@@ -1,5 +1,71 @@
 # 更新日志 / Changelog
 
+## 0.3.5 - 2026-09-12
+
+### 中文
+
+- 按最新要求将图片复制改为白底黑字 PNG，保留完整公式，去掉编辑光标，不裁切滚动窗口外的内容；屏幕预览主题不变。复制在短命 Worker 与系统剪贴板接口中完成，彻底移除临时转换页，无额外窗口或编辑器焦点切换。
+- 仅在图片写入剪贴板成功后，右上角复制按钮以淡出和轻微缩放过渡为绿色勾，约 1.6 秒后恢复；失败、取消、离开或修改公式时不显示错误成功状态。支持系统减少动态效果，反馈只更新按钮样式，不重建浮层或重新渲染公式。
+- Windows/macOS 使用系统自带图片剪贴板接口；Linux 支持 Wayland 的 wl-copy 和 X11 的 xclip，缺少工具明确报错。PNG 以 2 倍像素导出、白边 4px，超大图保持既有 8192px/1600 万像素及 2 MiB SVG 限额；后台栅格化完成即释放，不常驻 Webview，不访问网络。
+- 修复输入或删除字符时仍间歇闪烁的控制器竞态：公式身份改由起始标记、类型和环境判断，不再把随编辑变化的结束位置当作切换公式。光标事件先于新图返回时保留当前浮层，不清空图片、锚点和渲染状态。
+- 文档修改时同步公式源码位置，支持公式前方编辑、多处同时修改及 UTF-16 偏移；按文档版本避免重复平移。继续编辑时更新已识别的范围，包括未闭合定界符；慢渲染或暂时无效的输入保留最后成功帧，过期结果仍丢弃。移除起始标记、真正离开或切换公式，以及删到空内容或单个反斜杠时仍清除旧预览。
+- 保留双向细滚动条、光标避让、行间字号和 PNG 复制。本机通过实际控制器与扫描器的输入/删除时序回归，包括长公式、换行、多处编辑、慢响应和错误恢复；使用受控 VS Code API 与渲染响应，不把这些检查等同于真实编辑器逐帧验收。
+
+### English
+
+- Change copied images to PNGs with black formula ink on a solid white background, preserving the complete formula while omitting the editing caret and avoiding scroll-viewport cropping. The preview theme stays unchanged. A short-lived Worker and system clipboard interfaces replace the temporary conversion page, with no extra windows or editor focus changes.
+- Only after the image clipboard write succeeds, smoothly fade and scale the upper-right copy icon into a green checkmark, returning after about 1.6 seconds. Failure, cancellation, leaving, or editing the formula never shows a false success state. Respect reduced-motion preferences; feedback updates only button styles without rebuilding the hover or re-rendering math.
+- Use built-in image clipboard interfaces on Windows/macOS and support wl-copy on Linux Wayland and xclip on X11, reporting missing tools explicitly. PNG export retains 2× pixel density, 4px white margins, the 8192px/16-million-pixel limits, and the 2 MiB SVG limit. Release the rasterization Worker after each operation, without persistent Webviews or network access.
+- Fix the controller race behind intermittent flashing during insertion and deletion. Identify a formula by its opening token, kind, and environment instead of its changing end offset. When a selection event precedes the next rendered image, retain the current hover without clearing its image, anchors, or render state.
+- Rebase formula source positions after document changes, including edits before the formula, simultaneous changes, and UTF-16 offsets; use document versions to prevent double translation. Refresh recognized bounds while editing, including unfinished delimiters. Keep the last successful frame during slow renders and temporarily invalid input, while rejecting stale results. Removing the opener, leaving or switching formulas, and deleting down to empty content or a single backslash still clear the old preview.
+- Preserve thin bidirectional scrollbars, caret avoidance, display-math sizing, and PNG copying. Local checks exercise the actual controller and scanner across input/deletion event timing, long formulas, line breaks, simultaneous edits, slow responses, and error recovery, with controlled VS Code APIs and render responses; these checks are not frame-by-frame acceptance in a live editor.
+
+## 0.3.4 - 2026-09-12
+
+### 中文
+
+- 修复每输入一个字符预览就闪烁：同一浮层更新不再先隐藏后重开，新图片样式生效后才撤掉旧样式；编辑器保持焦点时，上一帧在原生悬浮组件的按键隐藏及异步渲染期间继续显示。更新光标位置无需重建滚动容器，定位后解除吸附；离开公式、失焦及 Esc 仍能关闭。保留浮层期间的复制按钮读取当前有效图片，关闭后旧按钮失效。
+- 公式浮层右上角的复制按钮改为复制完整公式的透明 PNG，包含横向和纵向滚动范围外的内容。保留当前预览字色，去掉编辑光标、浮层背景、边框、阴影与滚动条；默认以 2 倍像素导出，四周留 4px 透明边距，超大图片等比限制到最长边 8192px、总计 1600 万像素以内。
+- Windows、macOS 和 Linux 共用 VS Code Webview 的 Canvas 和图片剪贴板 API，无需额外工具、原生模块、网络或平台脚本。仅点击复制时打开临时转换页，成功后自动关闭并返回编辑器；若剪贴板拒绝写入，可直接点击页内按钮重试。切换页面或关闭即取消，不把失败降级为复制源码或图片地址。
+- 复制按钮固定在浮层右上角，支持鼠标与键盘操作；只替换本扩展预览的文本复制。命令仅信任当前通道的图片复制入口，并校验帧编号、文档版本与当前编辑器，防止旧按钮复制其他公式。复制模块按点击加载，普通预览不额外渲染或创建 Webview。
+
+### English
+
+- Fix the preview flashing on every typed character. Refresh the current hover without hiding it first, and apply the new image style before retiring the previous one. While the editor retains focus, keep the last frame visible through native keyboard dismissal and asynchronous rendering. Reposition the preview caret without rebuilding the scroll container, then release snapping; leaving the formula, losing focus, and Esc still dismiss it. Copy buttons retained with the hover read the current valid image and become invalid after dismissal.
+- Make the upper-right preview button copy the complete formula as a transparent PNG, including content outside both scroll axes. Preserve the current preview ink color and omit the editing caret, floating background, border, shadow, and scrollbars. Export at 2× pixel density by default with 4px transparent margins; scale oversized images proportionally within 8192px per edge and 16 million total pixels.
+- Use the same VS Code Webview Canvas and image clipboard APIs on Windows, macOS, and Linux, without extra tools, native modules, network access, or platform scripts. Open a temporary conversion page only when copying, then close it and return to the editor after success. If clipboard access is denied, retry with the page’s copy button. Switching away or closing cancels; failures never copy source text or an image URL instead.
+- Keep the mouse- and keyboard-accessible copy button at the upper right, replacing text copy only in this extension’s preview. Trust only the current channel’s copy command and validate the frame ID, document version, and active editor so stale buttons cannot copy another formula. Load the copy module only on click, without extra rendering or Webviews during ordinary preview.
+
+## 0.3.3 - 2026-09-12
+
+### 中文
+
+- 公式浮层改为可交互的双向滚动窗口：过宽或过高时保留实际字号，通过横向/纵向滚动查看其余部分；滑块宽 5px、操作轨道 8px，颜色跟随主题，保留圆角和悬停反馈。默认上限为 960×500px，并进一步限制在当前编辑器可用空间内，不再缩小整张长图。完整 SVG 由浮层样式绘制，避免原生悬浮 Markdown 的 10 万字符截断让大公式变空白，不增加磁盘读写。
+- 打开预览或继续编辑时，从已有 SVG 光标提取横纵坐标，优先显示其周围内容；首次定位完成后解除吸附，手动滚动位置保持到下一次编辑或移动源码光标。没有可用渲染光标时使用源码位置近似定位，不增加 TeX 标记或额外渲染请求。
+- 长宽公式自动选择编辑行上方或下方的空间，始终优先避开编辑位置；高度上限不依赖文件末尾空行。行间数学公式使用原字号的 85%，行内公式保持原字号，表格/TikZ 保留各自的比例。CSS 宽高上限约束滚动窗口；长公式的光标避让优先于自定义定位。
+- 使用 VS Code 原生悬浮组件接收滚轮和拖动操作，通过公开 API 按需显示；不改工作台文件或用户设置。离开公式、切换编辑器、关闭预览及失败时立即隐藏旧图并阻止迟到更新。正式/测试通道同时提供预览时，测试通道优先使用同一个原生浮层，避免重复图片和相互关闭。浮层获得焦点时 Esc 仍可关闭，并拦住另一通道在同一光标位置的迟到图片。
+- 更新全部 11 种 README 语言和中英 CSS 说明。本机核验包括真实 Worker 渲染、光标坐标、缩放、API 生命周期、原生悬浮 DOM/CSS 组件的滚动与窄视口检查；未启动新的 Extension Host，也不将组件验证当作所有 VS Code 衍生编辑器的实机验收。
+
+### English
+
+- Make the floating formula preview scrollable in both directions. Wide or tall formulas retain their actual font size; scroll horizontally or vertically to see the rest. Use 5px themed thumbs with 8px interaction tracks, rounded corners, and hover feedback. The default limit is 960×500px, further constrained by available editor space, without shrinking the full image. Draw the complete SVG through preview styles to avoid the native hover’s 100,000-character Markdown truncation blanking large formulas, without disk I/O.
+- When opening or editing, extract both coordinates from the existing SVG caret and initially show its surroundings. Release scroll snapping after initial placement so manual scrolling persists until the next edit or source-caret move. Fall back to an approximate source position when no rendered caret is available, without additional TeX markers or render requests.
+- Place oversized formulas above or below the editing line, prioritizing an unobstructed editing position. Height limits do not depend on trailing blank lines. Display math uses 85% of its previous font size; inline math stays unchanged, and tables/TikZ retain their own scales. CSS size limits constrain the scroll viewport; oversized formulas prioritize caret avoidance over custom positioning.
+- Use VS Code's native hover for wheel and scrollbar interactions, shown on demand through public APIs without modifying workbench files or user settings. Hide stale images immediately on leaving a formula, switching editors, dismissing, or failing, and reject late updates. When release and test channels both provide a preview, the test channel takes priority in the shared native hover to avoid duplicate images and conflicting dismissal. Esc also works while the hover has focus and suppresses late frames from the other channel at the same caret position.
+- Update all 11 README languages and the Chinese/English CSS guide. Local checks cover real Worker rendering, caret coordinates, scaling, API lifecycle, and scrolling/narrow viewports in a native-hover DOM/CSS component. No new Extension Host was launched; component checks do not imply acceptance on every VS Code derivative.
+
+## 0.3.2 - 2026-09-12
+
+### 中文
+
+- 修复公式靠近文件末尾、后面没有空行时预览随滚动异常缩小的问题：不再用可见源码行数估算窗口高度，改由现有 CSS 内容视口边界限制图片尺寸。同一公式无需添加空行即可保持正常大小，软换行和折叠源码也不会再压低高度估算。
+- 保留图片比例、自定义最大宽高、分屏边界、源码避让及 Notebook 占位；可用空间足够时保留预览原尺寸，空间不足时按真实边界缩小。不修改用户文档、不增加轮询或渲染请求。
+
+### English
+
+- Fix previews shrinking while scrolling near the end of a file without trailing blank lines. Stop estimating viewport height from visible source-line counts and let the existing CSS content-viewport bounds constrain the image. Formulas no longer need extra blank lines to retain their size; wrapped or folded source lines no longer reduce an estimated height.
+- Preserve image aspect ratio, custom maximum dimensions, split-editor bounds, source avoidance, and Notebook spacing. Keep the natural preview size when space permits and scale to the actual bounds otherwise, without editing documents or adding polling or render requests.
+
 ## 0.3.1 - 2026-09-12
 
 ### 中文

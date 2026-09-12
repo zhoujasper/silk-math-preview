@@ -12,16 +12,14 @@ import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
 import { recoverIncompleteTex } from '../core/incompleteTex';
 import { advanceMarkdownFenceState, findMathRegionAt, mathRegionContent, regionContainsOffset, scanMathRegions, selectionOverlapsRegion } from '../core/mathScanner';
 import { buildPreviewExpression } from '../core/previewExpression';
-import { decidePreviewSelection, shouldRetainLastPreviewFrame } from '../core/previewSelection';
+import { decidePreviewSelection, rebasePreviewRegion, samePreviewRegion, shouldRetainLastPreviewFrame } from '../core/previewSelection';
 import {
   floatingPreviewLayout,
   notebookPreviewSpacerCss,
   notebookPreviewSpacerPx,
-  previewPanelInsets,
   resolveEditorMetrics,
   previewViewportAnchorCss,
   parsePreviewCss,
-  hasAdvancedPreviewCss,
   previewFontScale,
   PreviewSourceAnchors,
   resolvePreviewAnchor,
@@ -65,6 +63,8 @@ interface CachedSvg {
   readonly uri: vscode.Uri;
   readonly widthPx: number;
   readonly heightPx: number;
+  readonly caretY?: number;
+  readonly caretX?: number;
   readonly renderMs: number;
 }
 
@@ -77,6 +77,7 @@ interface MarkdownFenceCache {
 interface ActivePreview {
   readonly editor: vscode.TextEditor;
   readonly region: MathRegion;
+  readonly version: number;
 }
 
 /** 控制面板需要的一帧状态。 */
@@ -105,6 +106,12 @@ const DEFINITION_REFRESH_MS = 180;
 /** 渲染失败多久之后才把原因显示出来；打字途中的瞬时失败不会走到这里。 */
 const FAILURE_NOTICE_MS = 400;
 const VIEWPORT_ANCHOR = `--${COMMAND_NS}-preview-viewport`;
+
+/** 行间推导使用更紧凑的字号；行内公式保留既有大小，表格保留独立比例。 */
+function mathPreviewScale(region: MathRegion): number {
+  if (isTablePreviewRegion(region)) return TABLE_PREVIEW_SCALE;
+  return region.kind === 'dollar-inline' || region.kind === 'paren-inline' ? 1 : 0.85;
+}
 
 interface PreviewSettings {
   readonly enabled: boolean;
@@ -259,6 +266,7 @@ export class PreviewController implements vscode.Disposable {
   });
   private readonly renderClient: RenderClient;
   private readonly sourceAnchors = new PreviewSourceAnchors();
+  private scrollPreview: import('./preview-scroll').ScrollablePreview | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly svgCache = new WeightedLru<CachedSvg>(SVG_CACHE_ENTRIES, SVG_CACHE_BYTES);
   private readonly markdownFenceCaches = new Map<string, MarkdownFenceCache>();
@@ -318,6 +326,7 @@ export class PreviewController implements vscode.Disposable {
       }),
       vscode.workspace.onDidChangeTextDocument((event) => {
         this.invalidateMarkdownFenceCache(event);
+        this.rebaseActivePreview(event);
         const editor = vscode.window.activeTextEditor;
         if (editor?.document === event.document) {
           const immediate = this.previewVisible
@@ -331,6 +340,7 @@ export class PreviewController implements vscode.Disposable {
       }),
       ...(policy.onDidChange
         ? [policy.onDidChange(() => {
+          this.scrollPreview?.resume();
           this.clearAllVisible();
           this.schedule(vscode.window.activeTextEditor, 0);
         })]
@@ -387,17 +397,23 @@ export class PreviewController implements vscode.Disposable {
   toggle(): boolean {
     this.enabled = !this.enabled;
     if (!this.enabled) this.clearAllVisible();
-    else this.schedule(vscode.window.activeTextEditor, 0);
+    else {
+      this.scrollPreview?.resume();
+      this.schedule(vscode.window.activeTextEditor, 0);
+    }
     return this.enabled;
   }
 
   refresh(): void {
+    this.scrollPreview?.resume();
+    this.lastDecorationSignature = undefined;
     this.svgCache.clear();
     this.schedule(vscode.window.activeTextEditor, 0);
   }
 
   /** 只关闭当前浮层；下一次移动光标或继续编辑时仍可正常重新显示。 */
   dismiss(): void {
+    this.scrollPreview?.dismiss();
     this.clearAllVisible();
   }
 
@@ -493,7 +509,8 @@ export class PreviewController implements vscode.Disposable {
       packages: snapshot.packages ?? [],
       foreground: palette.foreground,
       caretColor: palette.caret,
-      scale: isTikz ? this.settings.previewScale / 1.35 : isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1,
+      scale: isTikz ? this.settings.previewScale / 1.35 : mathPreviewScale(region),
+      fullSize: true,
       exPx: metrics.exPx,
       markUnknownCommands: this.settings.markUnknownCommands,
     });
@@ -590,7 +607,26 @@ export class PreviewController implements vscode.Disposable {
       return;
     }
     if (action === 'switch-region' && current) this.clearAllVisible();
+    if (action === 'update-at-offset' && hit) {
+      // Keep the source span current even while a slow/invalid draft has no new
+      // image. In particular, adding/removing a closer changes recovery bounds.
+      this.activePreview = { editor, region: hit, version: editor.document.version };
+      if (this.lastPaint?.editor === editor) this.lastPaint = { ...this.lastPaint, region: hit };
+    }
     this.schedule(editor, 0);
+  }
+
+  private rebaseActivePreview(event: vscode.TextDocumentChangeEvent): void {
+    const current = this.activePreview;
+    if (!current || current.editor.document !== event.document
+      || current.version === event.document.version || event.contentChanges.length === 0) return;
+    const region = rebasePreviewRegion(current.region, event.contentChanges);
+    if (!region) {
+      this.clearAllVisible();
+      return;
+    }
+    this.activePreview = { ...current, region, version: event.document.version };
+    if (this.lastPaint?.editor === current.editor) this.lastPaint = { ...this.lastPaint, region };
   }
 
   /** 只挪 decoration 锚点，不重新渲染。滚动时公式首行出视口，浮层必须跟到仍可见的那一行。 */
@@ -731,7 +767,7 @@ export class PreviewController implements vscode.Disposable {
       return;
     }
     // 表格常常比正文公式宽得多，整体缩小一档才放得下。
-    const scale = isTikz ? this.settings.previewScale / 1.35 : isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1;
+    const scale = isTikz ? this.settings.previewScale / 1.35 : mathPreviewScale(region);
     const key = cacheKey(
       expression,
       displayMode,
@@ -753,6 +789,7 @@ export class PreviewController implements vscode.Disposable {
         foreground: palette.foreground,
         caretColor: palette.caret,
         scale,
+        fullSize: true,
         exPx: metrics.exPx,
         markUnknownCommands: this.settings.markUnknownCommands,
       };
@@ -807,6 +844,8 @@ export class PreviewController implements vscode.Disposable {
         uri: dataUri(response.svg),
         widthPx: response.widthPx,
         heightPx: response.heightPx,
+        ...(response.caretY !== undefined ? { caretY: response.caretY } : {}),
+        ...(response.caretX !== undefined ? { caretX: response.caretX } : {}),
         renderMs: response.renderMs,
       };
       this.svgCache.set(key, rendered, Buffer.byteLength(response.svg, 'utf8'));
@@ -837,7 +876,7 @@ export class PreviewController implements vscode.Disposable {
     if (!this.settings.showRenderErrors) return;
     if (shouldRetainLastPreviewFrame({
       hasVisibleFrame: this.lastDecorationSignature !== undefined && this.lastPaint?.editor === editor,
-      sameRegion: this.activePreview?.editor === editor && this.activePreview.region.start === region.start,
+      sameRegion: this.activePreview?.editor === editor && samePreviewRegion(this.activePreview.region, region),
     })) {
       // 这条公式已经有可见的上一帧，保留它。
       return;
@@ -870,6 +909,7 @@ export class PreviewController implements vscode.Disposable {
     metrics: EditorMetrics,
     message: string,
   ): void {
+    this.scrollPreview?.clear();
     this.sourceAnchors.clear();
     this.lastPaint = undefined;
     const startLine = editor.document.positionAt(region.start).line;
@@ -943,7 +983,7 @@ export class PreviewController implements vscode.Disposable {
     }]);
     // 这一帧不是正常预览，不写入 signature，成功渲染时必须能覆盖它。
     this.lastDecorationSignature = undefined;
-    this.activePreview = { editor, region };
+    this.activePreview = { editor, region, version: editor.document.version };
     this.setPreviewVisible(true);
   }
 
@@ -1143,125 +1183,56 @@ export class PreviewController implements vscode.Disposable {
     renderKey: string,
   ): void {
     const themeVariant = previewThemeVariant();
-    const css = hasAdvancedPreviewCss(this.settings.previewCss)
-      ? this.settings.previewCss : { ...this.settings.previewCss, allowOverlap: true };
+    const css = this.settings.previewCss;
     const nominalFont = this.lastTikzDocument === editor.document.uri.toString()
       ? 16 * this.settings.previewScale / 1.35
-      : metrics.exPx * 2 * (isTablePreviewRegion(region) ? TABLE_PREVIEW_SCALE : 1);
+      : metrics.exPx * 2 * mathPreviewScale(region);
     const fontScale = previewFontScale(css, nominalFont);
     const widthPx = rendered.widthPx * fontScale;
     const heightPx = rendered.heightPx * fontScale;
     const startLine = editor.document.positionAt(region.start).line;
     const endLine = editor.document.positionAt(region.end).line;
     const visible = visibleLineSpan(editor);
-    if (endLine < visible.start || startLine > visible.end) {
-      // 全部公式滚出视口时不能把锚点夹到无关源码行。保留上一帧供滚回时复用。
+    const position = editor.selection.active;
+    if (endLine < visible.start || startLine > visible.end || position.line < visible.start || position.line > visible.end) {
+      this.scrollPreview?.clear(editor);
       this.sourceAnchors.clear(editor);
-      editor.setDecorations(this.decoration, []);
       this.lastDecorationSignature = undefined;
       return;
     }
-    const preferred = this.previewPlacement(editor, startLine, endLine, heightPx, metrics);
-    const geometry = this.sourceAnchors.plan(editor, region, css, preferred);
-    const placement = geometry?.placement ?? preferred;
-    const anchor = resolvePreviewAnchor({
-      formulaStartLine: startLine,
-      formulaEndLine: endLine,
-      visibleStartLine: visible.start,
-      visibleEndLine: visible.end,
-      placement,
-    });
-    const formulaStart = editor.document.positionAt(region.start);
-    const formulaEnd = editor.document.positionAt(region.end);
-    const columns = this.previewColumns(editor, formulaStart, formulaEnd, anchor.anchorLine);
-    const visibleHeightPx = Math.max(1, visible.end - visible.start + 1) * metrics.lineHeightPx;
-    const notebook = isNotebookCellDocument(editor.document);
-    // notebook 格子会裁溢出。撑高当前行后预览整块留在格内，不要再按半格高度截断。
-    const maxHeightPx = notebook
-      ? 0
-      : Math.max(metrics.lineHeightPx * 6, Math.round(visibleHeightPx * 0.5));
-    const horizontal = resolvePreviewHorizontalLayout({
-      previewWidthPx: widthPx,
-      previewHeightPx: heightPx,
-      startColumn: columns.start,
-      endColumn: columns.end,
-      fontSizePx: metrics.fontSizePx,
-      // VS Code API 不暴露水平像素视口；限位交给 CSS anchor，不用 120 列假装窗口宽度。
-      viewportWidthPx: 0,
-      maxHeightPx,
-    });
-    const gapPx = (css.gap?.value ?? 0) * (css.gap?.unit === 'lh' ? metrics.lineHeightPx : 1);
-    const outerHeight = horizontal.boxHeightPx + previewPanelInsets(css, themeVariant).vertical;
-    const spacerPx = notebook && placement === 'below'
-      ? notebookPreviewSpacerPx(outerHeight + gapPx + Math.max(0, css.offsetY), metrics.lineHeightPx)
-      : 0;
-    const signature = `${renderKey}|${region.start}|${region.end}|${anchor.anchorLine}|${formulaStart.character}|${horizontal.leftPx}|${horizontal.boxWidthPx}|${horizontal.boxHeightPx}|${themeVariant}|${placement}|s${spacerPx}|css${this.appearanceVersion}|${geometry?.signature ?? ''}`;
-    if (signature === this.lastDecorationSignature && this.activePreview?.editor === editor) {
-      // 内容和位置都没变，重设 decoration 只会让 VS Code 重新解码一次 SVG。
-      return;
+    const signature = `${renderKey}|${widthPx}|${heightPx}|${this.appearanceVersion}|${themeVariant}|${position.line}:${position.character}|${editor.document.version}`;
+    if (signature === this.lastDecorationSignature && this.activePreview?.editor === editor) return;
+    const followCaret = heightPx > metrics.lineHeightPx * 8 || widthPx > 640;
+    const geometry = this.sourceAnchors.plan(editor, region, followCaret ? { ...css, anchor: 'cursor' } : css,
+      this.previewPlacement(editor, startLine, endLine, heightPx, metrics));
+    this.sourceAnchors.apply(editor, geometry);
+    editor.setDecorations(this.decoration, []);
+    if (!this.scrollPreview) {
+      const { ScrollablePreview } = require('./preview-scroll') as typeof import('./preview-scroll');
+      this.scrollPreview = new ScrollablePreview();
+      this.disposables.push(this.scrollPreview);
     }
-    const layout = floatingPreviewLayout({
-      widthPx,
-      heightPx,
-      lineHeightPx: metrics.lineHeightPx,
-      lineSpan: anchor.lineSpan,
-      placement,
-      theme: themeVariant,
-      leftPx: horizontal.leftPx,
-      boxWidthPx: horizontal.boxWidthPx,
-      boxHeightPx: horizontal.boxHeightPx,
-      overflowX: horizontal.overflowX,
-      overflowY: horizontal.overflowY,
-      viewportAnchor: VIEWPORT_ANCHOR,
-      customCss: css,
-      ...(geometry ? { geometry: geometry.geometry, imageUri: rendered.uri.toString(true) } : {}),
+    const line = editor.document.lineAt(position.line).text;
+    const character = Math.min(position.character, Math.max(0, line.length - 1));
+    const range = new vscode.Range(new vscode.Position(position.line, character), new vscode.Position(position.line, Math.min(line.length, character + 1)));
+    const sourceProgress = Math.max(0, Math.min(1,
+      (editor.document.offsetAt(position) - region.contentStart) / Math.max(1, region.contentEnd - region.contentStart)));
+    this.scrollPreview.show(editor, range, {
+      uri: rendered.uri, widthPx, heightPx,
+      focusX: rendered.caretX ?? (startLine === endLine ? sourceProgress : 0),
+      focusY: rendered.caretY ?? (startLine === endLine ? 0.5 : sourceProgress),
+      lineHeightPx: metrics.lineHeightPx, viewportAnchor: VIEWPORT_ANCHOR, css,
+      geometry: geometry.geometry, placement: geometry.placement, followCaret,
+      key: `${renderKey}|${widthPx}|${heightPx}|${this.appearanceVersion}|${themeVariant}`,
+    }, error => {
+      if (this.lastDecorationSignature !== signature || this.activePreview?.editor !== editor) return;
+      this.trace(`scroll preview failed: ${String(error)}`);
+      this.clearEditor(editor);
+      if (this.settings.showRenderErrors) this.applyFailureNotice(editor, region, metrics, String(error));
     });
-    this.sourceAnchors.show(editor, geometry, layout);
-    const attachment: vscode.ThemableDecorationAttachmentRenderOptions = {
-      contentIconPath: rendered.uri,
-      width: layout.width,
-      height: layout.height,
-      margin: '0',
-      color: new vscode.ThemeColor('editorHoverWidget.foreground'),
-      backgroundColor: new vscode.ThemeColor('editorHoverWidget.background'),
-      ...(themeVariant === 'high-contrast'
-        ? {
-          border: '2px solid',
-          borderColor: new vscode.ThemeColor('contrastBorder'),
-        }
-        : {}),
-      // 实际图片由 overflow-guard 覆盖层绘制，此附件只保留原生行占位兼容性。
-      textDecoration: `${layout.textDecoration}; display: none !important`,
-    };
-    const range = geometry
-      ? new vscode.Range(geometry.range.start, formulaEnd.isBeforeOrEqual(geometry.range.start) ? geometry.range.end : formulaEnd)
-      : this.previewDecorationRange(editor, region, anchor.anchorLine);
-    const spacer = spacerPx > 0
-      ? {
-        after: {
-          contentText: '\u00a0',
-          width: '0px',
-          height: `${spacerPx}px`,
-          margin: '0',
-          textDecoration: notebookPreviewSpacerCss(spacerPx),
-        },
-      }
-      : {};
-    // 不挂 hoverMessage：鼠标扫过公式时不该弹出带关闭按钮的 hover 面板。
-    editor.setDecorations(this.decoration, [{
-      range,
-      // 锚在视口内的公式行：首行滚出屏幕后 VS Code 不会再画那一行的 decoration。
-      renderOptions: { before: attachment, ...spacer },
-    }]);
     this.lastDecorationSignature = signature;
-    this.lastPaint = {
-      editor,
-      region,
-      rendered,
-      metrics,
-      renderKey,
-    };
-    this.activePreview = { editor, region };
+    this.lastPaint = { editor, region, rendered, metrics, renderKey };
+    this.activePreview = { editor, region, version: editor.document.version };
     this.setPreviewVisible(true);
   }
 
@@ -1321,6 +1292,7 @@ export class PreviewController implements vscode.Disposable {
     this.clearFailureNotice();
     editor.setDecorations(this.decoration, []);
     this.sourceAnchors.clear(editor);
+    this.scrollPreview?.clear(editor);
     this.lastDecorationSignature = undefined;
     if (this.lastPaint?.editor === editor) this.lastPaint = undefined;
     if (this.lastRegionHit?.uri === editor.document.uri.toString()) this.lastRegionHit = undefined;
@@ -1347,6 +1319,7 @@ export class PreviewController implements vscode.Disposable {
     this.lastTikzDocument = undefined;
     this.clearFailureNotice();
     this.sourceAnchors.clear();
+    this.scrollPreview?.clear();
     for (const editor of vscode.window.visibleTextEditors) editor.setDecorations(this.decoration, []);
     this.lastDecorationSignature = undefined;
     this.lastPaint = undefined;

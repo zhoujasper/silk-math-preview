@@ -13,6 +13,9 @@
 !dist/ocr-controller.js
 !dist/ui-locale.js
 !dist/preview-style.js
+!dist/preview-scroll.js
+!dist/preview-copy.js
+!dist/png-worker.js
 !dist/preview-css.js
 !dist/render-worker.js
 !dist/ocr-worker.js
@@ -20,6 +23,7 @@
 !dist/tikz-context.js
 !resources/APACHE-2.0.txt
 !resources/OCR_THIRD_PARTY_NOTICES.md
+!resources/PNG_THIRD_PARTY_NOTICES.md
 !resources/TIKZ_THIRD_PARTY_NOTICES.md
 !resources/tikz-GPL-3.0.txt
 !resources/tikz-worker-source.tar.gz

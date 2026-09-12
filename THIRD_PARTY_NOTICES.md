@@ -15,5 +15,9 @@ Notices for the separately downloaded local OCR component, including the MIT
 attributions for code incorporated into the Webview bundle, are shipped at
 `resources/OCR_THIRD_PARTY_NOTICES.md`.
 
+The on-demand, offline PNG export Worker bundles Canvg, PureImage, XML parsing,
+and their selected dependencies. Full license texts and attributions are included
+in `resources/PNG_THIRD_PARTY_NOTICES.md`.
+
 This project is an independent implementation inspired by the publicly documented interaction of
 Ultra Math Preview. No Ultra Math Preview source, icon, screenshot, or branding is bundled.

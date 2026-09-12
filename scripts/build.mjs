@@ -94,6 +94,22 @@ const builds = [
   },
   {
     ...shared,
+    entryPoints: ['src/vscode/preview-scroll.ts'],
+    outfile: 'dist/preview-scroll.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode', './preview-copy'],
+  },
+  {
+    ...shared,
+    entryPoints: ['src/vscode/preview-copy.ts'],
+    outfile: 'dist/preview-copy.js',
+    platform: 'node',
+    format: 'cjs',
+    external: ['vscode'],
+  },
+  {
+    ...shared,
     entryPoints: ['src/vscode/preview-css.ts'],
     outfile: 'dist/preview-css.js',
     platform: 'node',
@@ -123,7 +139,14 @@ const builds = [
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    external: ['vscode', './tikz-context.js', './preview-style', './preview-css', './math-completion.js', './file-patterns', './settings-ui', './ocr-controller'],
+    external: ['vscode', './tikz-context.js', './preview-style', './preview-scroll', './preview-css', './math-completion.js', './file-patterns', './settings-ui', './ocr-controller'],
+  },
+  {
+    ...shared,
+    entryPoints: ['src/render/pngWorker.ts'],
+    outfile: 'dist/png-worker.js',
+    platform: 'node',
+    format: 'cjs',
   },
   {
     ...shared,

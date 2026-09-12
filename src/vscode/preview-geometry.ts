@@ -73,6 +73,7 @@ export class PreviewSourceAnchors implements vscode.Disposable {
       sourceStart: mark(sourceStart, 'formula-start'), sourceEnd: mark(sourceEnd, 'formula-end', true),
       right: placement === 'right' ? rights(start, end, 'reference-right-') : [],
       sourceRight: placement === 'right' ? rights(sourceStart, sourceEnd, 'formula-right-') : [],
+      editing: mark(clamp(selection.active), 'editing'),
       ...(cursor ? { caretAtEnd: start.character === document.lineAt(start.line).text.length } : {}),
     };
     const attachment = placement === 'below' ? end : start;

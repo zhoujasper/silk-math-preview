@@ -27,7 +27,7 @@ const WIDTH = 120 * EM;
 const MAX_CONTEXTS = 2;
 const MAX_SVG_BYTES = 2 * 1024 * 1024;
 const MAX_TEX_BUFFER = 256 * 1024;
-/** 超过这个宽度的公式整体等比缩小；宁可变小，也不让浮层背景盖不住内容。 */
+/** 非滚动输出沿用宽度适配；编辑器浮层以 fullSize 保留自然字号。 */
 const MAX_PANEL_EX = 130;
 
 export interface SvgRenderOptions {
@@ -40,6 +40,7 @@ export interface SvgRenderOptions {
   readonly caretColor: string;
   /** 输出尺寸的整体缩放；表格等宽内容用它显示得小一档。`exPx` 为 0 时不生效。 */
   readonly scale: number;
+  readonly fullSize?: boolean;
   /**
    * MathJax 的 1ex 折算成的 CSS 像素。大于 0 时把根节点尺寸改写为像素，
    * 使宿主可以用同一组数值画背景；0 表示保留 ex 尺寸，供 Webview 内联使用。
@@ -54,6 +55,9 @@ export interface SvgRenderResult {
   /** 与 SVG 根节点完全一致的像素尺寸；`exPx` 为 0 时按默认 1ex = 8px 估算。 */
   readonly widthPx: number;
   readonly heightPx: number;
+  /** 预览光标在整张图片中的位置（0–1），供滚动窗口跟随编辑位置。 */
+  readonly caretY?: number;
+  readonly caretX?: number;
 }
 
 /** MathJax retains the last parse tree and output wrapper after convert().
@@ -357,6 +361,42 @@ function transformBBox(box: BBox, matrix: Affine): BBox {
     maxX: Math.max(...xs),
     maxY: Math.max(...ys),
   };
+}
+
+/** 只观察现有光标矩形，不增加 TeX 标记或改变排版。 */
+function previewCaret(svg: string): { caretX: number; caretY: number } | undefined {
+  if (!svg.includes('class="silk-math-caret"')) return undefined;
+  const root = svg.match(/^<svg\b[^>]*>/)?.[0];
+  const viewBox = root && parseViewBox(root);
+  if (!viewBox) return undefined;
+  const stack = [{ matrix: parseTransform(attributeValue(root!, 'transform')), caret: false }];
+  const tags = /<g\b([^>]*)>|<\/g>|<rect\b([^>]*)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = tags.exec(svg))) {
+    if (match[0] === '</g>') {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const parent = stack[stack.length - 1]!;
+    const attrs = match[1] ?? match[2]!;
+    const matrix = multiplyAffine(parent.matrix, parseTransform(attributeValue(attrs, 'transform')));
+    const caret = parent.caret || (attributeValue(attrs, 'class') ?? '').split(/\s+/).includes('silk-math-caret');
+    if (match[1] !== undefined) {
+      if (!match[0].endsWith('/>')) stack.push({ matrix, caret });
+    } else if (caret) {
+      const x = numericAttribute(attrs, 'x') ?? 0;
+      const y = numericAttribute(attrs, 'y') ?? 0;
+      const width = numericAttribute(attrs, 'width') ?? 0;
+      const height = numericAttribute(attrs, 'height') ?? 0;
+      if (width <= 0 || height <= 0) continue;
+      const box = transformBBox({ minX: x, minY: y, maxX: x + width, maxY: y + height }, matrix);
+      return {
+        caretX: Math.max(0, Math.min(1, ((box.minX + box.maxX) / 2 - viewBox.minX) / viewBox.width)),
+        caretY: Math.max(0, Math.min(1, ((box.minY + box.maxY) / 2 - viewBox.minY) / viewBox.height)),
+      };
+    }
+  }
+  return undefined;
 }
 
 /** MathJax 拉伸段几乎都是 `M x y L x y L x y L x y Z` 轴对齐矩形。 */
@@ -1369,18 +1409,19 @@ export class MathJaxSvgRenderer {
       const height = heightLength ?? (viewBoxHeight !== undefined ? `${viewBoxHeight}px` : undefined);
       const widthEx = numericEx(width, 1);
       const heightEx = numericEx(height, 1);
+      const caret = previewCaret(svg);
       if (!(options.exPx > 0)) {
-        return { svg, widthPx: round2(widthEx * EX), heightPx: round2(heightEx * EX) };
+        return { svg, widthPx: round2(widthEx * EX), heightPx: round2(heightEx * EX), ...caret };
       }
       // MathJax 的 scale 转换选项不影响独立 SVG 的尺寸，缩放统一落在根节点像素上。
       const scale = Number.isFinite(options.scale) && options.scale > 0 ? options.scale : 1;
       const naturalWidth = widthEx * options.exPx * scale;
       const limit = MAX_PANEL_EX * options.exPx;
       // 过宽的公式等比缩小到上限，而不是把背景截断在上限处。
-      const shrink = naturalWidth > limit ? limit / naturalWidth : 1;
+      const shrink = !options.fullSize && naturalWidth > limit ? limit / naturalWidth : 1;
       const widthPx = round2(naturalWidth * shrink);
       const heightPx = round2(heightEx * options.exPx * scale * shrink);
-      return { svg: withPixelSize(svg, widthPx, heightPx), widthPx, heightPx };
+      return { svg: withPixelSize(svg, widthPx, heightPx), widthPx, heightPx, ...caret };
     } catch (error) {
       // MathJax 的失败转换可能留下未闭合 parser/group 状态；下一帧必须从干净上下文恢复。
       this.pool.evict(fingerprint, options.markUnknownCommands, context);

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 // Keep local work notes and conversation exports out of commits, pushes and release builds.
 const publicDocs = new Set(['COMPLETION.md', 'MACRO_SUPPORT.md', 'OCR_ACCURACY.md', 'PREVIEW_CSS.md', 'TIKZ.md']);
 const publicRootFiles = new Set(['README.md', 'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE', '.gitignore', '.vscodeignore', '.npmrc', 'package.json', 'package-lock.json', 'tsconfig.json']);
-const publicResources = new Set(['APACHE-2.0.txt', 'OCR_THIRD_PARTY_NOTICES.md', 'TIKZ_THIRD_PARTY_NOTICES.md', 'capture-windows.ps1', 'panel-icon.svg', 'read-clipboard-macos.js', 'tikz-GPL-3.0.txt', 'tikz-pgfplots-1.18.3.tar.gz']);
+const publicResources = new Set(['APACHE-2.0.txt', 'OCR_THIRD_PARTY_NOTICES.md', 'PNG_THIRD_PARTY_NOTICES.md', 'TIKZ_THIRD_PARTY_NOTICES.md', 'capture-windows.ps1', 'panel-icon.svg', 'read-clipboard-macos.js', 'tikz-GPL-3.0.txt', 'tikz-pgfplots-1.18.3.tar.gz']);
 function privatePath(path) {
   const parts = path.toLowerCase().split('/');
   const name = parts.at(-1);
