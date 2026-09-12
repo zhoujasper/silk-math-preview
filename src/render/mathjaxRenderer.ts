@@ -282,39 +282,6 @@ function parseViewBox(attributes: string): { minX: number; minY: number; width: 
   return { minX, minY, width, height };
 }
 
-function matchingSvgClose(source: string, openIndex: number): { index: number; length: number } | undefined {
-  let depth = 0;
-  const tag = /<svg\b[^>]*>|<\/svg>/gi;
-  tag.lastIndex = openIndex;
-  let match: RegExpExecArray | null;
-  while ((match = tag.exec(source))) {
-    const closing = match[0].startsWith('</');
-    depth += closing ? -1 : 1;
-    if (closing && depth === 0) return { index: match.index, length: match[0].length };
-  }
-  return undefined;
-}
-
-function findInnermostSvg(source: string, from: number): { start: number; openEnd: number; close: number; closeLength: number } | undefined {
-  let search = from;
-  while (search < source.length) {
-    const rest = source.slice(search);
-    const local = rest.search(/<svg\b/i);
-    if (local < 0) return undefined;
-    const start = search + local;
-    const openEnd = source.indexOf('>', start);
-    if (openEnd < 0) return undefined;
-    const close = matchingSvgClose(source, start);
-    if (!close) return undefined;
-    const inner = source.slice(openEnd + 1, close.index);
-    if (!/<svg\b/i.test(inner)) {
-      return { start, openEnd, close: close.index, closeLength: close.length };
-    }
-    search = openEnd + 1;
-  }
-  return undefined;
-}
-
 /**
  * VS Code 装饰的 `content: url(data:image/svg+xml)` 遇到内层 `<svg>` 会整张图画不出来，
  * 只剩浮层底。拉伸 `\underbrace` / `\sqrt` 正好用内层 svg 当视口。展平成等价的 `<g>`。
@@ -325,18 +292,31 @@ export function flattenInnerSvgs(svg: string): string {
   const lastClose = svg.lastIndexOf('</svg>');
   if (lastClose < rootOpenEnd) return svg;
   const prefix = svg.slice(0, rootOpenEnd + 1);
-  let body = svg.slice(rootOpenEnd + 1, lastClose);
+  const body = svg.slice(rootOpenEnd + 1, lastClose);
   const suffix = svg.slice(lastClose);
+  // A long formula can contain far more than 32 stretched glyphs. Read SVG tags
+  // once and reduce children before parents, without leaving later glyphs behind.
+  const stack: Array<{ open: string; parts: string[] }> = [{ open: '', parts: [] }];
+  const tag = /<svg\b[^>]*>|<\/svg>/gi;
+  let cursor = 0;
   let clipSeq = 0;
-  for (let guard = 0; guard < 32; guard += 1) {
-    const inner = findInnermostSvg(body, 0);
-    if (!inner) break;
-    const attrs = body.slice(inner.start, inner.openEnd + 1);
-    const children = body.slice(inner.openEnd + 1, inner.close);
-    body = `${body.slice(0, inner.start)}${innerSvgToGroup(attrs, children, clipSeq)}${body.slice(inner.close + inner.closeLength)}`;
-    clipSeq += 1;
+  let match: RegExpExecArray | null;
+  while ((match = tag.exec(body))) {
+    stack[stack.length - 1]!.parts.push(body.slice(cursor, match.index));
+    if (match[0].startsWith('</')) {
+      if (stack.length === 1) return svg;
+      const frame = stack.pop()!;
+      stack[stack.length - 1]!.parts.push(innerSvgToGroup(frame.open, frame.parts.join(''), clipSeq++));
+    } else if (/\/>$/.test(match[0])) {
+      stack[stack.length - 1]!.parts.push(innerSvgToGroup(match[0], '', clipSeq++));
+    } else {
+      stack.push({ open: match[0], parts: [] });
+    }
+    cursor = tag.lastIndex;
   }
-  return `${prefix}${body}${suffix}`;
+  if (stack.length !== 1) return svg;
+  stack[0]!.parts.push(body.slice(cursor));
+  return `${prefix}${stack[0]!.parts.join('')}${suffix}`;
 }
 
 interface BBox {
@@ -652,7 +632,9 @@ const TABLE_RULE_STROKE_WIDTH = 70;
 function restyleTableRules(svg: string, expression: string): string {
   const withLines = svg.replace(
     /<line\b([^>]*)>\s*(?:<\/line>)?/gi,
-    (_whole, attrs: string) => lineToRuleRect(attrs),
+    (whole, attrs: string) => /^(?:h|v)$/.test(attributeValue(attrs, 'data-line') ?? '')
+      ? lineToRuleRect(attrs)
+      : whole,
   );
   const withFrames = withLines.replace(
     /<rect\b([^>]*\bdata-frame\b[^>]*?)(\/?)>/gi,
@@ -666,6 +648,7 @@ function restyleTableRules(svg: string, expression: string): string {
 }
 
 interface SvgRect {
+  readonly group: number;
   readonly start: number;
   readonly end: number;
   readonly x: number;
@@ -727,24 +710,42 @@ export function tableRulesInRootSpace(svg: string): RootSpaceRule[] {
 
 function parseSvgRects(svg: string): SvgRect[] {
   const rects: SvgRect[] = [];
-  const tag = /<rect\b([^>]*)\/?>/gi;
+  const groups = [0];
+  let nextGroup = 0;
+  // Only table rules share the coordinates used by the table adjustments.
+  // Fraction bars, radicals, carets and clip rectangles belong to unrelated
+  // transformed groups; pairing them by width/height can corrupt the formula.
+  // Consume a paired closing tag too, so replacement never leaves </rect> behind.
+  const tag = /<g\b[^>]*>|<\/g>|<rect\b([^>]*?)(?:\s*\/>|>\s*<\/rect>)/gi;
   let match: RegExpExecArray | null;
   while ((match = tag.exec(svg))) {
+    if (match[0].startsWith('<g')) {
+      if (!/\/>$/.test(match[0])) groups.push(++nextGroup);
+      continue;
+    }
+    if (match[0].startsWith('</g')) {
+      if (groups.length > 1) groups.pop();
+      continue;
+    }
     const attrs = match[1] ?? '';
+    const dataLine = attributeValue(attrs, 'data-line');
+    const dataFrame = attributeValue(attrs, 'data-frame');
+    if (dataLine !== 'h' && dataLine !== 'v' && !dataFrame) continue;
     const x = numericAttribute(attrs, 'x') ?? 0;
     const y = numericAttribute(attrs, 'y') ?? 0;
     const width = numericAttribute(attrs, 'width') ?? 0;
     const height = numericAttribute(attrs, 'height') ?? 0;
     if (!(width > 0) || !(height > 0)) continue;
     rects.push({
+      group: groups[groups.length - 1]!,
       start: match.index,
       end: match.index + match[0].length,
       x,
       y,
       width,
       height,
-      dataLine: attributeValue(attrs, 'data-line'),
-      dataFrame: attributeValue(attrs, 'data-frame'),
+      dataLine,
+      dataFrame,
       fill: attributeValue(attrs, 'fill'),
     });
   }
@@ -752,17 +753,11 @@ function parseSvgRects(svg: string): SvgRect[] {
 }
 
 function isFilledHorizontalRule(rect: SvgRect): boolean {
-  if (rect.dataFrame) return false;
-  if (rect.dataLine === 'v') return false;
-  if (rect.fill === 'none') return false;
-  return rect.dataLine === 'h' || rect.width > rect.height * 2;
+  return !rect.dataFrame && rect.fill !== 'none' && rect.dataLine === 'h';
 }
 
 function isFilledVerticalRule(rect: SvgRect): boolean {
-  if (rect.dataFrame) return false;
-  if (rect.dataLine === 'h') return false;
-  if (rect.fill === 'none') return false;
-  return rect.dataLine === 'v' || rect.height > rect.width * 2;
+  return !rect.dataFrame && rect.fill !== 'none' && rect.dataLine === 'v';
 }
 
 function hlineRect(x: number, y: number, width: number, height: number): string {
@@ -983,10 +978,11 @@ function horizontalsOverlap(left: SvgRect, right: SvgRect): boolean {
 function compactPairedRules(svg: string): string {
   const rects = parseSvgRects(svg);
   const replacements: Array<{ readonly start: number; readonly end: number; readonly html: string }> = [];
-  const verticals = rects.filter(isFilledVerticalRule).sort((left, right) => left.x - right.x || left.y - right.y);
+  const verticals = rects.filter(isFilledVerticalRule).sort((left, right) => left.group - right.group || left.x - right.x || left.y - right.y);
   for (let index = 0; index < verticals.length - 1; index += 1) {
     const first = verticals[index]!;
     const second = verticals[index + 1]!;
+    if (first.group !== second.group) continue;
     if (!verticalsOverlap(first, second)) continue;
     const gap = second.x - (first.x + first.width);
     if (!(gap > 0) || gap > PAIR_GAP_LIMIT) continue;
@@ -999,10 +995,11 @@ function compactPairedRules(svg: string): string {
       html: `<rect data-line="v" x="${round2(x)}" y="${round2(second.y)}" width="${round2(second.width)}" height="${round2(second.height)}" fill="currentColor" stroke="none"/>`,
     });
   }
-  const horizontals = rects.filter(isFilledHorizontalRule).sort((left, right) => left.y - right.y || left.x - right.x);
+  const horizontals = rects.filter(isFilledHorizontalRule).sort((left, right) => left.group - right.group || left.y - right.y || left.x - right.x);
   for (let index = 0; index < horizontals.length - 1; index += 1) {
     const first = horizontals[index]!;
     const second = horizontals[index + 1]!;
+    if (first.group !== second.group) continue;
     if (!horizontalsOverlap(first, second)) continue;
     const gap = second.y - (first.y + first.height);
     if (!(gap > 0) || gap > PAIR_GAP_LIMIT) continue;

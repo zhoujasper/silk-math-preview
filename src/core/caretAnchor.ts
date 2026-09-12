@@ -419,6 +419,22 @@ export function anchorCaret(text: string, requestedOffset: number): CaretAnchor 
 
   const data = dataArgumentSeam(text, clampedOffset);
   if (data) return data;
+
+  // A trailing, unpaired backslash would escape the inserted marker itself:
+  // "\\" + "\\class{...}" becomes a row break followed by visible "class...".
+  // Put the marker before that unfinished control sequence. Recovery can then
+  // discard the trailing slash without changing the source or any complete token.
+  const slash = clampedOffset - 1;
+  if (text[slash] === '\\' && !isEscaped(text, slash)) {
+    return {
+      requestedOffset,
+      offset: slash,
+      exact: false,
+      reason: 'control-sequence',
+      unsafeRange: { start: slash, end: clampedOffset },
+    };
+  }
+
   const unsafe = unsafeSpanAt(text, clampedOffset);
   if (unsafe === undefined) {
     const seam = safeArgumentSeam(text, clampedOffset);

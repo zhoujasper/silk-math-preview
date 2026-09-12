@@ -680,6 +680,15 @@ export class PreviewController implements vscode.Disposable {
       return;
     }
     const content = mathRegionContent(regionSource, localRegion);
+    // Empty math, or just the start of a command, has nothing to preview yet.
+    // Clear a previous frame too: deleting a formula down to "$\\" must not
+    // leave the old formula or our internal caret marker visible.
+    if (!isTikz && /^\s*(?:\\\s*)?$/.test(content)) {
+      this.clearFailureNotice();
+      this.clearEditor(editor);
+      this.emitFrame(editor, region, { status: 'idle' });
+      return;
+    }
     const definitionOnly = !isTikz && isDefinitionOnlySource(content);
     if (definitionOnly && !this.settings.previewDefinitions) {
       this.clearFailureNotice();
@@ -735,7 +744,7 @@ export class PreviewController implements vscode.Disposable {
     );
     let rendered = this.svgCache.get(key);
     if (!rendered) {
-      const response = await (isTikz ? this.tikz! : this.renderClient).render({
+      const renderInput = {
         expression,
         displayMode,
         definitionFingerprint: snapshot.fingerprint,
@@ -746,7 +755,22 @@ export class PreviewController implements vscode.Disposable {
         scale,
         exPx: metrics.exPx,
         markUnknownCommands: this.settings.markUnknownCommands,
-      });
+      };
+      let response = await (isTikz ? this.tikz! : this.renderClient).render(renderInput);
+      if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
+      // A preview-only caret can become an argument of a TeX primitive (lengths,
+      // delimiters, macro definitions, etc.). Retry the unmarked source once;
+      // valid content must remain visible even where an exact caret is unsafe.
+      if (!response.ok && response.error !== 'cancelled' && response.error !== 'superseded'
+        && !isTikz && showCaret && !definitionOnly) {
+        const unmarked = recoverIncompleteTex(buildPreviewExpression(
+          regionSource, localRegion, caretOffset - region.start, false,
+        ).expression);
+        if (unmarked !== expression) {
+          this.trace('retry render without preview caret');
+          response = await this.renderClient.render({ ...renderInput, expression: unmarked });
+        }
+      }
       if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
       this.trace(response.ok
         ? `render ok ${response.widthPx}x${response.heightPx}px svg=${response.svg.length}B ${response.renderMs.toFixed(1)}ms :: ${expression.slice(0, 160)}`

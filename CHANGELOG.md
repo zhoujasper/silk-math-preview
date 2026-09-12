@@ -1,5 +1,23 @@
 # 更新日志 / Changelog
 
+## 0.3.1 - 2026-09-12
+
+### 中文
+
+- 修复复杂公式单独显示等号左右两边正常、完整组合却只剩空白背景的问题：表格线后处理仅操作带有明确标记的表格线，不再把分数线、根号横线、光标或裁剪矩形误当成表格线；替换矩形时保留完整的 SVG 标签结构，不跨坐标组配对。
+- 拉伸图形的 SVG 展平改为按标签顺序处理全部内层视口，取消原来只处理前 32 项的限制，覆盖包含大量根式、长箭头、上下括弧的长公式；保留现有尺寸和资源上限。
+- 预览光标插入长度、定界符或宏定义参数导致渲染失败时，只重试一次不带预览光标的原公式。正常公式不增加渲染请求；取消、过期响应和切换编辑器仍立即停止，真正无效的公式保留错误处理。
+- 修复刚输入 `$` 和单个反斜杠时把内部光标命令显示成公式的问题：空公式不发起渲染并清除旧预览；未完成反斜杠不再转义光标标记。保留合法的反斜杠、斜线、转义字符和已有数学内容，不改写源码。
+- 本机核验覆盖原始公式及拆分对照、长高与嵌套组合、SVG 结构/几何、光标位置及控制器取消行为；未运行新的 Extension Host 图形界面验收。另按用户要求提供只保存在本地的全面手动测试手册与可编辑公式样本，明确区分正常用例、输入边界和未支持写法。
+
+### English
+
+- Fix complex formulas that display either side of an equation separately but leave only an empty background when combined. Restrict table-rule processing to explicitly marked table rules, excluding fraction bars, radical bars, carets, and clip rectangles. Replace complete SVG rectangle elements and keep rule pairing within the same coordinate group.
+- Flatten every nested SVG viewport in tag order instead of stopping after 32 items. Cover long formulas with many radicals, extended arrows, and over/underbraces while preserving existing size and resource limits.
+- If inserting the preview caret into a length, delimiter, or macro-definition argument causes a render failure, retry the unmarked formula once. Normal formulas need no extra render request; cancellation, stale responses, and editor switches still stop updates, and genuinely invalid formulas retain error handling.
+- Fix internal caret commands appearing as formula content after typing `$` followed by a single backslash. Empty formulas skip rendering and clear the previous preview; an unfinished backslash no longer escapes the caret marker. Preserve valid backslashes, slashes, escaped characters, and existing math without editing the source.
+- Local checks cover the reported formula and its separate sides, long/tall nested combinations, SVG structure and geometry, caret positions, and controller cancellation. No new Extension Host GUI acceptance was performed. Provide a comprehensive local-only manual and editable formula samples as requested, distinguishing normal cases, input boundaries, and unsupported syntax.
+
 ## 0.3.0 - 2026-09-11
 
 ### 中文
