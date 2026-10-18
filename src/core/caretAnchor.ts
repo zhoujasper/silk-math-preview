@@ -23,6 +23,7 @@ const PROTECTED_ARGUMENTS: Readonly<Record<string, number>> = {
   class: 1, style: 1, cssId: 1, href: 1, label: 1, ref: 1, eqref: 1, cite: 1, tag: 1,
   DeclareMathOperator: 1, newcommand: 1, renewcommand: 1,
   operatorname: 1,
+  genfrac: 4,
 };
 // `\begin{...}`/`\end{...}` 由 readEnvironmentHead 当作整体保护，不必重复列入。
 
@@ -30,7 +31,8 @@ const KNOWN_COMMAND_ARITY: Readonly<Record<string, number>> = {
   frac: 2, dfrac: 2, tfrac: 2, binom: 2,
   sqrt: 1, text: 1, mathrm: 1, mathbf: 1, mathit: 1, mathbb: 1, mathcal: 1,
   operatorname: 1, overline: 1, underline: 1, hat: 1, bar: 1, vec: 1,
-  dot: 1, ddot: 1,
+  dot: 1, ddot: 1, not: 1,
+  overset: 2, underset: 2, stackrel: 2, mathchoice: 4, cfrac: 2,
 };
 
 /** 数字/单位命令消费的是数据；插入 TeX 光标会破坏指数或格式选项。 */
@@ -38,6 +40,7 @@ const DATA_COMMAND_ARITY: Readonly<Record<string, number>> = {
   num: 1, numlist: 1, numproduct: 1, numrange: 2, ang: 1,
   si: 1, unit: 1, SI: 2, qty: 2, SIlist: 2, qtylist: 2,
   SIproduct: 2, qtyproduct: 2, SIrange: 3, qtyrange: 3,
+  rule: 2, hspace: 1, vspace: 1, pu: 1,
 };
 
 function dataArgumentSeam(text: string, offset: number): CaretAnchor | undefined {
@@ -108,7 +111,7 @@ function readEnvironmentHead(
     return undefined;
   }
   let end = command.end;
-  while (text[end] === ' ' || text[end] === '\t') {
+  while (/[ \t\r\n]/.test(text[end] ?? '')) {
     end += 1;
   }
   if (text[end] === '{') {
@@ -146,7 +149,7 @@ function readLeftRightHead(
     return undefined;
   }
   let end = command.end;
-  while (text[end] === ' ' || text[end] === '\t') {
+  while (/[ \t\r\n]/.test(text[end] ?? '')) {
     end += 1;
   }
   const delimiterCommand = readControlSequence(text, end);
@@ -298,6 +301,10 @@ function protectedArgumentSeam(
     if (text[scan] === '*' && /^(?:tag|operatorname|DeclareMathOperator|newcommand|renewcommand)$/.test(command.name)) {
       scan = skipWhitespace(text, scan + 1);
     }
+    if (/^(?:textcolor|color|colorbox|fcolorbox|definecolor)$/.test(command.name)) {
+      const optional = groupEnd(text, scan, '[', ']');
+      if (optional) scan = skipWhitespace(text, optional);
+    }
     let protectedEnd = command.end;
     for (let index = 0; index < protectedCount; index += 1) {
       if (text[scan] !== '{') break;
@@ -320,12 +327,16 @@ function protectedArgumentSeam(
 function safeArgumentSeam(text: string, requestedOffset: number): CaretAnchor | undefined {
   const script = scriptArgumentSeam(text, requestedOffset);
   if (script) {
+    const argument = script.offset > requestedOffset
+      && readControlSequence(text, skipWhitespace(text, requestedOffset))
+      ? safeArgumentSeam(text, script.offset)
+      : undefined;
     return {
       requestedOffset,
-      offset: script.offset,
+      offset: argument?.offset ?? script.offset,
       exact: false,
       reason: 'script-argument-seam',
-      unsafeRange: { start: script.markerStart, end: script.offset },
+      unsafeRange: { start: script.markerStart, end: argument?.offset ?? script.offset },
     };
   }
 
@@ -365,7 +376,7 @@ function safeArgumentSeam(text: string, requestedOffset: number): CaretAnchor | 
       continue;
     }
     let argumentCursor = skipWhitespace(text, command.end);
-    if (command.name === 'sqrt' && text[argumentCursor] === '[') {
+    if ((command.name === 'sqrt' || command.name === 'cfrac') && text[argumentCursor] === '[') {
       argumentCursor = skipWhitespace(text, groupEnd(text, argumentCursor, '[', ']') ?? argumentCursor);
     }
     // 花括号参数可以落进组内；`\frac12` 这种单 token 参数没有“内部”，
@@ -431,6 +442,8 @@ function anchorCaretInternal(text: string, requestedOffset: number): CaretAnchor
   // discard the trailing slash without changing the source or any complete token.
   const slash = clampedOffset - 1;
   if (text[slash] === '\\' && !isEscaped(text, slash)) {
+    const seam = safeArgumentSeam(text, slash);
+    if (seam) return { ...seam, requestedOffset };
     return {
       requestedOffset,
       offset: slash,
@@ -489,8 +502,9 @@ export function anchorCaret(source: string, requestedOffset: number): CaretAncho
       break;
     }
   }
+  protectedOffset = syntaxArgumentOffset(text, protectedOffset);
   const anchor = anchorCaretInternal(text, protectedOffset);
-  let offset = anchor.offset;
+  let offset = syntaxArgumentOffset(text, anchor.offset);
   for (;;) {
     const start = skipWhitespace(text, offset);
     const rule = /^\\(?:hline|hdashline)\b/.exec(text.slice(start));
@@ -500,4 +514,36 @@ export function anchorCaret(source: string, requestedOffset: number): CaretAncho
   return offset === anchor.offset && protectedOffset === requestedOffset ? anchor : {
     ...anchor, requestedOffset, offset, exact: false, reason: 'command-argument-seam',
   };
+}
+
+/** 尺寸、可选参数和操作符修饰符不是独立数学原子，不能插入光标命令。 */
+function syntaxArgumentOffset(text: string, offset: number): number {
+  for (let cursor = 0; cursor < text.length;) {
+    const command = readControlSequence(text, cursor);
+    if (!command) { cursor += 1; continue; }
+    cursor = command.end;
+    const delimiter = readLeftRightHead(text, command);
+    if (delimiter && offset > command.start && offset < delimiter.end) return delimiter.end;
+    let start = skipWhitespace(text, command.end);
+    if (/^(?:kern|mkern|hskip|mskip)$/.test(command.name)) {
+      const dimension = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*(?:pt|em|ex|mu|px|cm|mm|in|pc|bp|dd|cc|sp)/.exec(text.slice(start));
+      if (dimension && offset > command.start && offset < start + dimension[0].length) {
+        return start + dimension[0].length;
+      }
+    }
+    if (command.name === '\\' || /^(?:xrightarrow|xleftarrow|smash|sqrt|cfrac)$/.test(command.name)) {
+      const optional = groupEnd(text, start, '[', ']');
+      if (optional) {
+        start = skipWhitespace(text, optional);
+        const target = text[start] === '{' && command.name !== '\\' ? start + 1 : optional;
+        if (offset > command.start && offset <= start) return target;
+      }
+    }
+    if (/^(?:limits|nolimits|displaylimits)$/.test(command.name)) {
+      let before = command.start;
+      while (before > 0 && /\s/.test(text[before - 1] ?? '')) before -= 1;
+      if (offset >= before && offset < command.end) return command.end;
+    }
+  }
+  return offset;
 }

@@ -153,11 +153,15 @@ function protectEnvironmentArguments(
   return columns !== undefined && caretOffset <= columns.length ? columns.length : caretOffset;
 }
 
-/** 从 `from` 开始数未转义的 `$`，判断 offset 是否落在行内数学里。 */
+/** 识别文本中的 `$...$` 和 `\(...\)`，避免在数学内再次插入美元符。 */
 function isInsideInlineMath(content: string, offset: number, from = 0): boolean {
   let open = false;
   for (let cursor = from; cursor < offset; cursor += 1) {
     if (content[cursor] === '$' && !isEscaped(content, cursor)) open = !open;
+    if (content[cursor] === '\\' && !isEscaped(content, cursor) && cursor + 1 < offset) {
+      if (content[cursor + 1] === '(') { open = true; cursor += 1; }
+      else if (content[cursor + 1] === ')') { open = false; cursor += 1; }
+    }
   }
   return open;
 }

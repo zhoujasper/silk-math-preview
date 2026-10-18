@@ -1449,7 +1449,9 @@ export class MathJaxSvgRenderer {
         ex: EX,
         containerWidth: WIDTH,
       });
-      const raw = context.adaptor.outerHTML(node);
+      // 独立 SVG 是 XML：HTML 序列化会保留属性里的 < / >，使 data-latex
+      // 中的 0<a<L 被后续清理误认成 <a> 标签，且随光标注入位置偶发损坏。
+      const raw = context.adaptor.serializeXML(node);
       const svg = sanitizeStandaloneSvg(raw, options.foreground, options.caretColor, recovered);
       if (Buffer.byteLength(svg, 'utf8') > MAX_SVG_BYTES) {
         throw new Error('公式生成的 SVG 超过 2 MiB，已停止显示以保护编辑器性能');

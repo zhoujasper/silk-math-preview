@@ -1,5 +1,17 @@
 # 更新日志 / Changelog
 
+## 0.3.23 - 2026-10-18
+
+### 中文
+
+- 修复 `0<a<L`、`0<a` 等无空格不等式随光标位置偶发显示空白预览的问题。独立 SVG 改用 XML 序列化，正确转义公式元数据中的尖括号，避免清理时误认成 HTML/SVG 标签；不需要修改公式或添加空格。
+- 补齐光标在尺寸、颜色选项、矩阵行间距、伸缩括号、箭头、连续分式及操作符修饰符附近的语法保护；修复无花括号多参数命令、上下标中的命令参数、否定符号、物理单位及文本内嵌数学的光标注入。非数学参数内的预览光标吸附到安全边界，源码不变。
+
+### English
+
+- Fix blank previews for unspaced inequalities such as `0<a<L` and `0<a` at certain caret positions. Serialize standalone SVG as XML so angle brackets in formula metadata are escaped before sanitization; no source edits or added spaces are needed.
+- Protect caret insertion around dimensions, color options, matrix row spacing, delimiters, arrows, continued fractions and operator modifiers. Handle unbraced multi-argument commands, command arguments in scripts, negation, physical units and math nested in text. Preview carets within syntax-only arguments snap to a safe boundary without changing source text.
+
 ## 0.3.22 - 2026-10-18
 
 ### 中文
