@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { COMMAND_NS, IS_TEST_CHANNEL } from '../core/channel';
 import type { PreviewCss } from '../core/previewCss';
-import { previewPanelInsets, type PreviewGeometry, type PreviewPlacement } from '../core/previewLayout';
+import { hasAdvancedPreviewCss, previewPanelInsets, type PreviewGeometry, type PreviewPlacement } from '../core/previewLayout';
 import { previewCopyLabels } from './preview-copy-labels';
+import { editorInteractive, sinceEditorInteraction } from './editorInteraction';
 
 export interface ScrollPreviewFrame {
   readonly uri: vscode.Uri;
@@ -22,8 +23,13 @@ export interface ScrollPreviewFrame {
 const IMAGE = `${COMMAND_NS}-scroll-image`;
 const TARGET = `${COMMAND_NS}-scroll-focus`;
 const COPY_COMMAND = `${COMMAND_NS}._copyPreviewPng`;
+/** 固定在滚动区域外，不能只给可横向滚走的内容加 padding。 */
+const COPY_GUTTER_PX = 26;
+const COPY_MIN_HEIGHT_PX = 24;
 const DOT = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiLz4=';
 const number = (value: number) => Math.round(Math.max(0, value) * 100) / 100;
+/** 自动恢复焦点只跟随刚刚发生的编辑区内操作；更晚的恢复可能把焦点从查找框等输入框抢走。 */
+const FOCUS_RESTORE_WINDOW_MS = 250;
 
 /** 原生 hover 提供鼠标事件、滚动模型和拖动条；CSS 只作用于本通道的图片。 */
 export function scrollPreviewCss(frame: ScrollPreviewFrame): string {
@@ -42,43 +48,54 @@ export function scrollPreviewCss(frame: ScrollPreviewFrame): string {
   const viewportHeight = `anchor-size(${frame.viewportAnchor} height, 100vh)`;
   const customWidth = frame.css.maxWidth?.endsWith('%')
     ? `calc(${viewportWidth} * ${parseFloat(frame.css.maxWidth) / 100})` : frame.css.maxWidth ?? '960px';
-  const maxWidth = `max(1px, min(${number(frame.widthPx + insets.horizontal)}px, ${customWidth}, calc(${viewportWidth} - 24px)))`;
-  // 上下至少有一侧容得下半个视口减去编辑行；不依赖 EOF 的可见源码行数。
-  const maxHeight = `max(1px, min(${number(frame.heightPx + insets.vertical)}px, ${frame.css.maxHeight ?? 500}px, calc((${viewportHeight} - ${number(frame.lineHeightPx * 2 + 32)}px) / 2)))`;
+  const maxWidth = `max(1px, min(${number(frame.widthPx + insets.horizontal + COPY_GUTTER_PX)}px, ${customWidth}, calc(${viewportWidth} - 24px)))`;
   const padding = frame.css.padding?.map(value => `${value}px`).join(' ') ?? '4px 8px';
-  const appearance = frame.css.declarations.split(';').filter(part => !part.trim().startsWith('padding:')).join(';');
+  const declarations = frame.css.declarations.split(';').filter(part => !part.trim().startsWith('padding:'));
+  const surfaceProperty = (part: string) => /^(box-shadow|opacity):/.test(part.trim());
+  const appearance = declarations.filter(part => !surfaceProperty(part)).join(';');
+  const surface = declarations.filter(part => surfaceProperty(part) || part.trim().startsWith('border-radius:')).join(';');
   const anchor = (name: string, edge: string) => `anchor(${name} ${edge}, 0px)`;
   const viewport = (edge: string) => anchor(frame.viewportAnchor, edge);
   const editing = frame.geometry.editing ?? frame.geometry.start;
-  const gap = Math.max(frame.lineHeightPx * 0.5, (frame.css.gap?.value ?? 2) * (frame.css.gap?.unit === 'lh' ? frame.lineHeightPx : 1));
-  const guard = number(gap + insets.vertical);
+  const gap = (frame.css.gap?.value ?? 2) * (frame.css.gap?.unit === 'lh' ? frame.lineHeightPx : 1);
+  const guard = number(frame.lineHeightPx * 0.5);
+  const protectSource = frame.css.allowOverlap === false
+    || (frame.css.allowOverlap === undefined && hasAdvancedPreviewCss(frame.css));
   const above = frame.placement === 'above';
-  const right = frame.placement === 'right' && !frame.followCaret;
-  const nativePlacement = frame.followCaret || (frame.placement === 'below' && frame.css.anchor === undefined && frame.css.placement === undefined
+  const right = frame.placement === 'right';
+  const caretPlacement = frame.followCaret || (frame.placement === 'below' && frame.css.anchor === undefined && frame.css.placement === undefined
     && frame.css.gap === undefined && frame.css.allowOverlap === undefined && frame.css.offsetX === 0 && frame.css.offsetY === 0);
-  const reference = frame.followCaret ? editing : above ? frame.geometry.start : frame.geometry.end;
+  // 跟随光标只改变基准，不改变用户选择的方向。
+  const heightReserve = caretPlacement ? frame.lineHeightPx + guard * 4 + 8 : frame.lineHeightPx * 2 + 32;
+  const maxHeight = `max(1px, min(${number(Math.max(frame.heightPx + insets.vertical, COPY_MIN_HEIGHT_PX + (frame.css.borderWidth ?? 0) * 2))}px, ${frame.css.maxHeight ?? 500}px, calc((${viewportHeight} - ${number(heightReserve)}px) / 2)))`;
+  const reference = caretPlacement ? editing : above ? frame.geometry.start : frame.geometry.end;
   const source = above ? frame.geometry.sourceStart : frame.geometry.sourceEnd;
   const edge = above ? 'top' : 'bottom';
-  const near = `max(calc(${anchor(editing, edge)} + ${guard}px), calc(${anchor(reference, edge)} + ${number(gap + Math.max(0, frame.css.offsetY * (above ? -1 : 1)))}px)${frame.css.allowOverlap === false && !frame.followCaret ? `, calc(${anchor(source, edge)} + ${guard}px)` : ''})`;
+  // near is a top inset below the source, and a bottom inset above it.
+  // Clamp against that same viewport inset, not the opposite source edge.
+  const near = `max(calc(${viewport(above ? 'bottom' : 'top')} + 4px), ${anchor(reference, edge)}, calc(${anchor(editing, edge)} + ${guard}px), calc(${anchor(reference, edge)} + ${gap + frame.css.offsetY * (above ? -1 : 1)}px)${protectSource ? `, calc(${anchor(source, edge)} + ${guard}px)` : ''})`;
   const far = `calc(${viewport(edge)} + 4px)`;
-  const rightEdges = [...frame.geometry.right, ...(frame.css.allowOverlap === false ? frame.geometry.sourceRight : [])];
+  const rightEdges = [...frame.geometry.right, ...(protectSource ? frame.geometry.sourceRight : [])];
   const left = right
-    ? `max(calc(${viewport('left')} + 4px), calc(${anchor(editing, 'right')} + ${guard}px), calc(${anchor(frame.geometry.end, 'right')} + ${gap + frame.css.offsetX}px)${rightEdges.map(name => `, calc(${anchor(name, 'right')} + ${gap + Math.max(0, frame.css.offsetX)}px)`).join('')})`
-    : `clamp(calc(${viewport('left')} + 4px), calc(${anchor(frame.geometry.start, 'left')} + ${frame.css.offsetX}px), calc(${viewport('right')} - var(--silk-hover-width) - 4px))`;
+    ? `max(calc(${viewport('left')} + 4px), ${anchor(frame.geometry.end, 'right')}, calc(${anchor(editing, 'right')} + ${guard}px), calc(${anchor(frame.geometry.end, 'right')} + ${gap + frame.css.offsetX}px)${rightEdges.map(name => `, ${anchor(name, 'right')}, calc(${anchor(name, 'right')} + ${gap + frame.css.offsetX}px)`).join('')}${protectSource ? frame.geometry.sourceRight.map(name => `, calc(${anchor(name, 'right')} + ${guard}px)`).join('') : ''})`
+    : `clamp(calc(${viewport('left')} + 4px), calc(${anchor(caretPlacement ? editing : frame.geometry.start, 'left')} + ${caretPlacement ? 0 : frame.css.offsetX}px), calc(${viewport('right')} - var(--silk-hover-width) - 4px))`;
   return `none;
     ${owner} > .overflow-guard > .monaco-scrollable-element {
       anchor-name: --silkMath-preview-viewport, --silkMathTest-preview-viewport;
     }
     ${owner} .monaco-resizable-hover:has(${image}) {
-      border: 0 !important; border-radius: 6px; background: transparent !important; box-shadow: none !important;
-      position-anchor: ${frame.viewportAnchor};
+      border: 0 !important; border-radius: 6px; background: transparent !important;
+      box-shadow: 0 4px 18px rgba(0,0,0,.22); opacity: .98; ${surface};
+      position: fixed !important; position-anchor: ${caretPlacement ? editing : frame.viewportAnchor};
       --silk-hover-width: ${maxWidth};
-      ${nativePlacement ? `width: var(--silk-hover-width) !important; height: ${maxHeight} !important;` : `position: fixed !important;
       left: ${left} !important; right: calc(${viewport('right')} + 4px) !important;
-      top: ${right ? `clamp(calc(${viewport('top')} + 4px), ${anchor(editing, 'top')}, calc(${viewport('bottom')} - ${maxHeight} - 4px))` : above ? `calc(${viewport('top')} + 4px)` : near} !important;
+      position-area: none !important; position-try-fallbacks: none !important;
+      position-try-order: normal !important;
+      top: ${right ? `clamp(calc(${viewport('top')} + 4px), calc(${anchor(frame.geometry.start, 'top')} + ${frame.css.offsetY}px), calc(${viewport('bottom')} - ${maxHeight} - 4px))` : above ? `calc(${viewport('top')} + 4px)` : near} !important;
       bottom: ${right ? `calc(${viewport('bottom')} + 4px)` : above ? near : far} !important;
       width: ${right ? 'auto' : 'var(--silk-hover-width)'} !important; height: auto !important;
-      margin: 0; ${above ? 'margin-top' : 'margin-bottom'}: auto;`}
+      margin: 0; ${above ? 'margin-top' : 'margin-bottom'}: auto !important;
+      overflow: hidden; container-type: size; container-name: ${COMMAND_NS}-preview-size;
       min-width: 0 !important; min-height: 0 !important;
       max-width: ${maxWidth} !important; max-height: ${maxHeight} !important;
     }
@@ -90,10 +107,11 @@ export function scrollPreviewCss(frame: ScrollPreviewFrame): string {
     }
     ${hover}, ${scroller}, ${content} { min-width: 0 !important; min-height: 0 !important;
       width: 100% !important; height: 100% !important; max-width: 100% !important; max-height: 100% !important; box-sizing: border-box; }
+    ${scroller} { width: max(1px, calc(100% - ${COPY_GUTTER_PX}px)) !important; }
     ${hover} { anchor-name: ${copyAnchor}; border: 0; border-radius: 6px; padding: 0 !important;
       background: var(--vscode-editorHoverWidget-background); color: var(--vscode-editorHoverWidget-foreground);
-      box-shadow: 0 4px 18px rgba(0,0,0,.22); outline: 1px solid var(--vscode-contrastBorder, transparent);
-      outline-offset: -1px; opacity: .98; animation: none !important; ${appearance}; }
+      box-shadow: none; outline: 1px solid var(--vscode-contrastBorder, transparent);
+      outline-offset: -1px; opacity: 1; animation: none !important; ${appearance}; }
     ${content} { box-sizing: border-box; padding: ${padding} !important;
       scroll-snap-type: var(--silk-scroll-snap, none); scroll-behavior: auto; overflow-anchor: none;
       overscroll-behavior: contain; transition: scroll-snap-type 1ms allow-discrete 80ms;
@@ -107,22 +125,27 @@ export function scrollPreviewCss(frame: ScrollPreviewFrame): string {
     ${hover} .hover-row:not(:has(${image})) { display: none !important; }
     ${hover} .hover-copy-button { display: none !important; }
     ${copy} { position: fixed !important; position-anchor: ${copyAnchor};
-      top: calc(anchor(${copyAnchor} top) + 4px); left: calc(anchor(${copyAnchor} right) - 34px);
-      width: 26px; height: 26px; display: flex !important; align-items: center; justify-content: center;
+      top: calc(anchor(${copyAnchor} top) + 3px); left: calc(anchor(${copyAnchor} right) - 23px);
+      width: 18px; height: 18px; display: flex !important; align-items: center; justify-content: center;
       z-index: 5; border-radius: 4px; color: var(--vscode-editorHoverWidget-foreground) !important;
       background: var(--vscode-editorHoverWidget-background); opacity: .75; text-decoration: none !important;
-      cursor: pointer; font-size: 16px !important; line-height: 1 !important; --silk-copy-done: 0;
+      cursor: pointer; font-size: 12px !important; line-height: 1 !important; --silk-copy-done: 0;
       transition: opacity 160ms ease, background-color 160ms ease; }
     ${copy}:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
     ${copy}:focus-visible { opacity: 1; outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-    ${copy} .codicon { font-size: 16px !important; opacity: calc(1 - var(--silk-copy-done));
+    ${copy} .codicon { font-size: 12px !important; opacity: calc(1 - var(--silk-copy-done));
       transform: scale(calc(1 - var(--silk-copy-done) * .35)) rotate(calc(var(--silk-copy-done) * -20deg));
       transition: opacity 160ms ease, transform 220ms cubic-bezier(.2,.8,.2,1); }
-    ${copy}::after { content: ''; position: absolute; left: 9px; top: 5px; width: 6px; height: 11px;
+    ${copy}::after { content: ''; position: absolute; left: 6px; top: 3px; width: 4px; height: 8px;
       border: solid var(--vscode-testing-iconPassed, #73c991); border-width: 0 2px 2px 0;
       opacity: var(--silk-copy-done); transform: rotate(45deg) scale(calc(.65 + var(--silk-copy-done) * .35));
       transition: opacity 180ms ease, transform 240ms cubic-bezier(.16,1,.3,1); pointer-events: none; }
     @media (prefers-reduced-motion: reduce) { ${copy}, ${copy} .codicon, ${copy}::after { transition: none !important; } }
+    /* No usable same-side area: hide descendants, including the fixed copy control, without flipping. */
+    @container ${COMMAND_NS}-preview-size (width < ${number(COPY_GUTTER_PX + insets.horizontal + 1)}px) or (height < ${number(Math.max(COPY_MIN_HEIGHT_PX + (frame.css.borderWidth ?? 0) * 2, insets.vertical + 1))}px) {
+      ${hover} { opacity: 0 !important; pointer-events: none !important; }
+      ${copy} { pointer-events: none !important; }
+    }
     ${hover} .rendered-markdown:has(${image}) {
       position: relative; width: ${number(frame.widthPx)}px; height: ${number(frame.heightPx)}px;
       margin: 0 !important; padding: 0 !important; overflow: visible !important;
@@ -166,8 +189,30 @@ class HoverCoordinator {
   private shownEditor: vscode.TextEditor | undefined;
   private revision = 0;
   private queue = Promise.resolve();
+  private automaticFocus: { revision: number; current: CurrentFrame } | undefined;
   private ownedEditor: vscode.TextEditor | undefined;
   private dismissed: { editor: vscode.TextEditor; version: number; position: vscode.Position } | undefined;
+  /** 不调用宿主命令、仅用样式隐藏的浮层；下一次正常显示或关闭后再释放。 */
+  private concealed: vscode.Disposable[] = [];
+
+  preserveEditorFocus(): void {
+    const request = this.automaticFocus;
+    if (!request) return;
+    this.automaticFocus = undefined;
+    // Native accessible hovers focus themselves after their asynchronous content arrives.
+    // Restore only this automatic request; later mouse/keyboard hover requests remain interactive.
+    setTimeout(() => {
+      const { current, revision } = request;
+      if (revision !== this.revision || this.selected?.current !== current
+        || !vscode.window.state.focused || vscode.window.activeTextEditor !== current.editor
+        || current.editor.document.version !== current.version
+        || !current.editor.selection.active.isEqual(current.position)
+        // 关闭无障碍模式时原生 hover 不会取得焦点，恢复只会抢走查找框等其他输入框的焦点。
+        || vscode.workspace.getConfiguration('editor', current.editor.document).get<string>('accessibilitySupport') === 'off'
+        || !editorInteractive(current.editor) || sinceEditorInteraction(current.editor) > FOCUS_RESTORE_WINDOW_MS) return;
+      void vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+    }, 50);
+  }
 
   dismiss(): void {
     const editor = vscode.window.activeTextEditor;
@@ -186,29 +231,75 @@ class HoverCoordinator {
     const selected = eligible.find(owner => owner.testChannel) ?? eligible[0];
     const current = selected?.current;
     if (selected === this.selected && current?.key === this.shownKey && current?.editor === this.shownEditor) return;
+    if (active && !editorInteractive(active)) {
+      this.updateQuietly(selected, current);
+      return;
+    }
     const continuing = selected !== undefined && selected === this.selected && current?.editor === this.shownEditor;
     const hidden = continuing ? undefined : this.selected?.hideNow();
     this.selected = selected;
     this.shownKey = current?.key;
     this.shownEditor = current?.editor;
     const revision = ++this.revision;
+    const concealed = this.concealed;
+    this.concealed = [];
     selected?.paint();
     this.queue = this.queue.then(async () => {
       if (revision !== this.revision) return;
+      // 排队期间用户可能已经进入查找框；不能只在 update() 入队前判断焦点来源。
+      const active = vscode.window.activeTextEditor;
+      if (active && !editorInteractive(active)) {
+        this.updateQuietly(selected, current);
+        return;
+      }
       if (!continuing && this.ownedEditor && this.ownedEditor === vscode.window.activeTextEditor) {
         await vscode.commands.executeCommand('editor.action.hideHover');
         this.ownedEditor = undefined;
       }
       if (!current && revision === this.revision) this.ownedEditor = undefined;
       if (!current || revision !== this.revision || current.editor !== vscode.window.activeTextEditor) return;
+      // hideHover 也是异步宿主命令，等待期间的程序化选区变化必须再次拦截。
+      if (!editorInteractive(current.editor)) {
+        this.updateQuietly(selected, current);
+        return;
+      }
       this.ownedEditor = current.editor;
+      this.automaticFocus = { revision, current };
       await vscode.commands.executeCommand('editor.action.showHover', { focus: 'noAutoFocus' });
+      this.preserveEditorFocus();
     }).catch(error => { if (revision === this.revision) current?.failed(error); })
-      .finally(() => hidden?.dispose());
+      .finally(() => {
+        hidden?.dispose();
+        for (const style of concealed) style.dispose();
+      });
+  }
+
+  /**
+   * 选区由查找/替换等程序化操作移动时，输入焦点可能不在正文里。此时绝不调用 showHover、
+   * hideHover 或焦点命令：已显示的同一浮层只换图，其余情况仅用样式隐藏，等下一次编辑区内操作再正常显示。
+   */
+  private updateQuietly(selected: ScrollablePreview | undefined, current: CurrentFrame | undefined): void {
+    ++this.revision;
+    this.automaticFocus = undefined;
+    if (current && selected && selected === this.selected && current.editor === this.shownEditor
+      && this.ownedEditor === current.editor && this.concealed.length === 0) {
+      this.shownKey = current.key;
+      selected.paint();
+      return;
+    }
+    const hidden = this.selected?.hideNow();
+    if (hidden) this.concealed.push(hidden);
+    this.selected = undefined;
+    this.shownKey = undefined;
+    this.shownEditor = undefined;
+  }
+
+  disposeConcealed(): void {
+    for (const style of this.concealed.splice(0)) style.dispose();
   }
 }
 
-const COORDINATOR = Symbol.for('silkmath.preview.hover-coordinator.v1');
+const COORDINATOR = Symbol.for('silkmath.preview.hover-coordinator.v2');
 function coordinator(): HoverCoordinator {
   const shared = globalThis as typeof globalThis & { [COORDINATOR]?: HoverCoordinator };
   return shared[COORDINATOR] ??= new HoverCoordinator();
@@ -260,6 +351,7 @@ export class ScrollablePreview implements vscode.Disposable {
       if (!current || this.broker.selected !== this || token.isCancellationRequested
         || current.editor !== vscode.window.activeTextEditor || document !== current.editor.document
         || document.version !== current.version || !position.isEqual(current.position)) return undefined;
+      this.broker.preserveEditorFocus();
       return new vscode.Hover(current.markdown, new vscode.Range(position, position));
     },
   });
@@ -353,7 +445,10 @@ export class ScrollablePreview implements vscode.Disposable {
     this.clear();
     this.provider.dispose();
     this.broker.owners.delete(this);
-    if (this.broker.owners.size === 0) this.broker.resume();
+    if (this.broker.owners.size === 0) {
+      this.broker.resume();
+      this.broker.disposeConcealed();
+    }
     this.clearFocus();
     this.style?.dispose();
   }

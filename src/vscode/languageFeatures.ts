@@ -160,7 +160,11 @@ class LanguageFeatureController implements vscode.Disposable {
       this.diagnosticCollection.delete(document.uri);
       return;
     }
-    const snapshot = await this.definitions.getSnapshot(document, text.length);
+    // Edits can invalidate an asynchronous dependency traversal. Do not let a
+    // cancelled snapshot become an unhandled rejection from the idle timer.
+    let snapshot;
+    try { snapshot = await this.definitions.getSnapshot(document, text.length); }
+    catch { return; }
     if (
       this.disposed ||
       document.isClosed ||

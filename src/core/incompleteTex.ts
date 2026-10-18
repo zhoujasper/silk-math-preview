@@ -176,8 +176,31 @@ function closeOpenConstructs(text: string): string {
   return closers.length === 0 ? text : `${text}${closers.join('')}`;
 }
 
-/** 完整公式原样返回；未写完的公式只补渲染副本。 */
+/** MathJax 的参数读取先配括号；必须在读取参数之前消除注释中的伪结构。
+ * 注释吃掉换行及下一行缩进，但控制词仍需要词法边界，避免把 \foo 和 bar 接成 \foobar。
+ */
+function withoutComments(text: string): string {
+  if (!text.includes('%')) return text;
+  const parts: string[] = [];
+  let from = 0;
+  for (let cursor = 0; cursor < text.length; cursor++) {
+    if (text[cursor] !== '%' || isEscaped(text, cursor)) continue;
+    const before = text.slice(from, cursor);
+    parts.push(before);
+    const command = /\\[A-Za-z@]+$/.exec(before);
+    if (command && !isEscaped(before, command.index)) parts.push(' ');
+    const newline = text.indexOf('\n', cursor);
+    cursor = newline < 0 ? text.length : newline + 1;
+    while (cursor < text.length && /[ \t]/.test(text[cursor] ?? '')) cursor++;
+    from = cursor;
+    cursor--;
+  }
+  parts.push(text.slice(from));
+  return parts.join('');
+}
+
+/** 仅清理渲染副本中的注释与未写完结构，从不改写源文档。 */
 export function recoverIncompleteTex(expression: string): string {
   if (!expression) return expression;
-  return completeTrailingArity(closeOpenConstructs(stripTrailingIncomplete(expression)));
+  return completeTrailingArity(closeOpenConstructs(stripTrailingIncomplete(withoutComments(expression))));
 }

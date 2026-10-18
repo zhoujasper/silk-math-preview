@@ -22,11 +22,6 @@ export function readMathCompletionContext(
   environments: readonly string[],
   allowEmpty = false,
 ): CompletionContext | undefined {
-  const environmentKey = environments.join('\0');
-  const scan = cachedScan?.text === text && cachedScan.language === language && cachedScan.environments === environmentKey
-    ? cachedScan.scan : scanMathRegions(text, { language, customMathEnvironments: environments, includePreviewContainers: false });
-  cachedScan = text.length <= 256 * 1024 ? { text, language, environments: environmentKey, scan } : undefined;
-  if (scan.ignoredRanges.some(range => range.start < offset && offset <= range.end)) return undefined;
   const before = text.slice(Math.max(text.lastIndexOf('\n', offset - 1) + 1, offset - 512), offset);
   // An odd backslash run is a command; the last slash in \\ is not a new command.
   const env = /(\\+)(begin|end)\{([A-Za-z0-9@:_-]*\*?)$/.exec(before);
@@ -34,8 +29,23 @@ export function readMathCompletionContext(
   const command = /(\\+)([A-Za-z@]*\*?(?:[([|])?)$/.exec(before);
   const match = env ?? key ?? command;
   if (match && match[1]!.length % 2 === 0) return undefined;
-  if (!env && !findMathRegionAt(scan.regions, offset)) return undefined;
   if (!match && !allowEmpty) return undefined;
+  const environmentKey = environments.join('\0');
+  const scan = cachedScan?.text === text && cachedScan.language === language && cachedScan.environments === environmentKey
+    ? cachedScan.scan : scanMathRegions(text, { language, customMathEnvironments: environments, includePreviewContainers: false });
+  // One cache with an explicit memory budget also serves long papers. The old
+  // 256 KiB text cutoff scanned those papers twice in a single completion call.
+  const weight = text.length * 2 + scan.regions.length * 160 + scan.ignoredRanges.length * 32;
+  cachedScan = weight <= 8 * 1024 * 1024 ? { text, language, environments: environmentKey, scan } : undefined;
+  let low = 0, high = scan.ignoredRanges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const range = scan.ignoredRanges[middle]!;
+    if (offset <= range.start) high = middle - 1;
+    else if (offset > range.end) low = middle + 1;
+    else return undefined;
+  }
+  if (!env && !findMathRegionAt(scan.regions, offset)) return undefined;
   const prefix = env ? env[3]! : key ? key[3]!.split(',').at(-1)!.trimStart() : command?.[2] ?? '';
   const start = offset - prefix.length - (env || key || !command ? 0 : 1);
   const suffix = (env ? /^[A-Za-z0-9@:_-]*\*?/ : key ? /^[^,}\s]*/ : /^[A-Za-z@]*\*?/).exec(text.slice(offset))?.[0] ?? '';

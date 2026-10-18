@@ -32,6 +32,7 @@ export class RenderClient {
   private workerStarts = 0;
   private staleResponses = 0;
   private lastRenderMs = 0;
+  private disposed = false;
 
   constructor(
     private readonly workerPath: string,
@@ -46,11 +47,17 @@ export class RenderClient {
 
   /** 只创建隔离 Worker，不把 MathJax 字节带入扩展主线程。 */
   prepare(): void {
-    this.ensureWorker();
-    this.armIdleTimer();
+    if (this.disposed) return;
+    // Warm-up is speculative. A failed launch is reported by the actual render
+    // request rather than escaping a VS Code selection/document event handler.
+    try {
+      this.ensureWorker();
+      this.armIdleTimer();
+    } catch { /* render() retries and reports the launch failure. */ }
   }
 
   render(input: Omit<RenderRequest, 'type' | 'id'>): Promise<RenderResponse> {
+    if (this.disposed) return Promise.reject(new Error('渲染 Worker 已关闭'));
     const id = this.nextId++;
     this.latestId = id;
     this.requests++;
@@ -82,6 +89,7 @@ export class RenderClient {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
     const worker = this.worker;
@@ -92,10 +100,20 @@ export class RenderClient {
   }
 
   private send(request: PendingRequest): void {
+    this.inflight = request;
+    try {
+      this.sendToWorker(request);
+    } catch (error) {
+      const worker = this.worker;
+      this.failPending(error instanceof Error ? error : new Error(String(error)));
+      void worker?.terminate();
+    }
+  }
+
+  private sendToWorker(request: PendingRequest): void {
     const worker = this.ensureWorker();
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
-    this.inflight = request;
     const timer = setTimeout(() => {
       if (this.inflight?.id !== request.id) return;
       const error = new Error(`渲染超过 ${(this.options.timeoutMs ?? 10_000) / 1000} 秒，Worker 已回收 / Render timed out`);
@@ -136,7 +154,9 @@ export class RenderClient {
       this.armIdleTimer();
     });
     worker.on('error', (error) => {
-      if (this.worker === worker) this.failPending(error);
+      if (this.worker !== worker) return;
+      this.failPending(error);
+      void worker.terminate();
     });
     worker.on('exit', (code) => {
       if (this.worker !== worker) return;
@@ -149,6 +169,8 @@ export class RenderClient {
   }
 
   private failPending(error: Error): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
     this.worker = undefined;
     const inflight = this.inflight;
     const queued = this.queued;

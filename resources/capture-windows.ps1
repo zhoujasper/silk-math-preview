@@ -1,19 +1,28 @@
-param(
-    [Parameter(Mandatory = $true)][string]$OutputPath,
-    [ValidateSet('capture', 'clipboard')][string]$Mode = 'capture'
-)
+# Silk Math OCR helper for Windows PowerShell 5.1+.
+# Keep this file ASCII-only: Windows PowerShell decodes BOM-less scripts with the ANSI
+# code page (for example GBK), so non-ASCII text can corrupt the following lines.
+# The extension does not run this file with -File (execution policy) or -EncodedCommand
+# (often blocked by security software). Its text is passed in an environment variable and
+# run as a script block; values arrive in environment variables and the exit code is the
+# value returned by this script block (0 = done or empty clipboard, 2 = cancelled, 1 = error).
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$OutputPath = $env:SILK_OCR_OUTPUT
+$Mode = $env:SILK_OCR_MODE
+if ([string]::IsNullOrEmpty($OutputPath)) { [Console]::Error.WriteLine('Missing output path.'); return 1 }
+if ($Mode -ne 'clipboard') { $Mode = 'capture' }
+try {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 if ($Mode -eq 'clipboard') {
     $image = [System.Windows.Forms.Clipboard]::GetImage()
-    if ($null -eq $image) { exit 0 }
+    if ($null -eq $image) { return 0 }
     try { $image.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png) }
     finally { $image.Dispose() }
-    exit 0
+    return 0
 }
 
-# 单个临时屏幕选区覆盖层；没有编辑器标签或识别面板。
+# One temporary full-screen selection layer; no editor tab or recognition panel.
 Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
 using System;
 using System.Drawing;
@@ -22,6 +31,8 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 public class SilkRegionCapture : Form {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
     Bitmap screen;
     Point start;
     Rectangle selection;
@@ -39,6 +50,19 @@ public class SilkRegionCapture : Form {
         Bounds = bounds;
         TopMost = true; ShowInTaskbar = false; KeyPreview = true; DoubleBuffered = true;
         Cursor = Cursors.Cross;
+    }
+    // The extension starts PowerShell hidden (no console flash). Windows may apply that
+    // STARTUPINFO SW_HIDE to the first ShowWindow call of the process, so consume it here
+    // and show the overlay explicitly once WinForms reports it as shown.
+    protected override void OnHandleCreated(EventArgs e) {
+        base.OnHandleCreated(e);
+        ShowWindow(Handle, 0);
+    }
+    protected override void OnShown(EventArgs e) {
+        base.OnShown(e);
+        ShowWindow(Handle, 5);
+        SetForegroundWindow(Handle);
+        Activate();
     }
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.DrawImageUnscaled(screen, 0, 0);
@@ -84,6 +108,11 @@ public class SilkRegionCapture : Form {
 $capture = New-Object SilkRegionCapture($OutputPath)
 try {
     $capture.ShowDialog() | Out-Null
-    if (-not $capture.Saved) { exit 2 }
+    if (-not $capture.Saved) { return 2 }
 }
 finally { $capture.Dispose() }
+return 0
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    return 1
+}

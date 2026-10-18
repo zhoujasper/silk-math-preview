@@ -111,7 +111,7 @@ export class DefinitionWorkspace implements vscode.Disposable {
       vscode.workspace.onDidChangeTextDocument((event) => {
         const cached = this.tikzContext;
         if (!cached) return;
-        if (cached.document !== uriKey(event.document.uri) || event.contentChanges.some((change) => event.document.offsetAt(change.range.start) < cached.offset)) this.tikzContext = undefined;
+        if (cached.document !== uriKey(event.document.uri) || event.contentChanges.some((change) => change.rangeOffset < cached.offset)) this.tikzContext = undefined;
         else cached.version = event.document.version;
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
@@ -136,12 +136,15 @@ export class DefinitionWorkspace implements vscode.Disposable {
         if (this.disposed || !isSupportedDocument(event.document) || isIgnoredUri(event.document.uri)) return;
         this.fileSources.delete(uriKey(event.document.uri));
         const active = vscode.window.activeTextEditor?.document.uri;
-        const changes = event.contentChanges.map((change) => ({
-          start: event.document.offsetAt(change.range.start), inserted: change.text, deleted: change.rangeLength ?? 0,
-        }));
+        let precedingDelta = 0;
+        const changes = [...event.contentChanges].sort((a, b) => a.rangeOffset - b.rangeOffset).map((change) => {
+          const currentStart = change.rangeOffset + precedingDelta;
+          precedingDelta += change.text.length - change.rangeLength;
+          return { start: change.rangeOffset, currentStart, inserted: change.text, deleted: change.rangeLength };
+        });
         const affects = changes.some((change) => {
           const prefix = event.document.getText(new vscode.Range(
-            event.document.positionAt(Math.max(0, change.start - 128)), event.document.positionAt(change.start),
+            event.document.positionAt(Math.max(0, change.currentStart - 128)), event.document.positionAt(change.currentStart),
           ));
           return /!\s*TeX\s+root|\\(?:begin|end)\s*\{document\}/i.test(prefix + change.inserted)
             || texDocumentEditsAffectDefinitions(prefix, [{ ...change, start: prefix.length }]);
@@ -261,7 +264,8 @@ export class DefinitionWorkspace implements vscode.Disposable {
         this.resolvedSnapshots.set(documentKey, resolved, weight);
       })
       .catch(() => {
-        // 失败由调用方处理，这里只是不缓存。
+        // 不把失败 Promise 留在缓存中，否则相同版本下一次请求永远无法恢复。
+        if (this.snapshots.get(documentKey)?.value === value) this.snapshots.delete(documentKey);
       });
     return value;
   }
@@ -573,8 +577,8 @@ export class DefinitionWorkspace implements vscode.Disposable {
       ...(folder ? [vscode.Uri.joinPath(folder.uri, relativeName)] : []),
     ]);
     for (const candidate of candidates) {
-      const reachable = isInsideUri(candidate, documentFolder)
-        || (folder !== undefined && isInsideFolder(candidate, folder));
+      const reachable = folder ? isInsideFolder(candidate, folder)
+        : candidate.scheme === source.scheme && candidate.authority === source.authority;
       if (reachable && !isIgnoredUri(candidate) && (findOpenDocument(candidate) || await isFile(candidate))) {
         return candidate;
       }
@@ -587,7 +591,8 @@ export class DefinitionWorkspace implements vscode.Disposable {
       }
     }
 
-    if (!relativeName || !folder) {
+    // Explicit relative paths must resolve exactly, never select an unrelated basename.
+    if (!relativeName || !folder || relativeName.includes('/')) {
       return undefined;
     }
     const matches = await vscode.workspace.findFiles(
@@ -759,7 +764,10 @@ function isInsideFolder(uri: vscode.Uri, folder: vscode.WorkspaceFolder): boolea
 }
 
 function isSafeLiteralName(name: string): boolean {
-  return /^[A-Za-z0-9@._+/-]+$/.test(name) && !name.split('/').includes('..');
+  // Literal relative paths may contain parent segments, spaces, and Unicode.
+  // Reject TeX expansion, URI/absolute paths, control characters and glob syntax.
+  return name.length > 0 && !/^(?:\/|[A-Za-z]:)/.test(name)
+    && !/[\\{}%#\u0000-\u001f:*?\[\]<>|"]/.test(name);
 }
 
 function isIgnoredUri(uri: vscode.Uri): boolean {

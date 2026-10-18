@@ -192,6 +192,11 @@ export function skipTeXWhitespace(text: string, offset: number): number {
   return index;
 }
 
+/** 便宜的声明入口检查；普通公式扫描和局部编辑不构建完整定义表。 */
+export function hasDefinitionDeclarations(text: string): boolean {
+  return /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareRobustCommand|(?:New|Renew|Provide|Declare)Document(?:Command|Environment)|DeclareMath(?:Operator|Alphabet)|DeclareSymbolFontAlphabet|DeclarePairedDelimiter|DeclareSIUnit|definecolor|providecolor|colorlet|sisetup|gdef|def)\b/.test(text);
+}
+
 /** 解析常见声明式命令和环境；不会执行条件、catcode、expl3 或 LuaTeX。 */
 export function parseDefinitions(
   text: string,

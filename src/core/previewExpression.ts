@@ -1,4 +1,5 @@
 import { anchorCaret } from './caretAnchor';
+import { maskTeXComments } from './definitionParser';
 import { mathRegionContent } from './mathScanner';
 import { buildMarkdownTableExpression, markdownTableCellStart } from './markdownTable';
 import { buildTableExpression, isTableEnvironment, isTablePreviewRegion, tablePreambleLength } from './tablePreview';
@@ -51,10 +52,25 @@ export function sanitizeEnvironmentBodyForMathJax(text: string): string {
 
 function wrapEnvironmentForPreview(environment: string, content: string): string {
   if (Object.hasOwn(INNER_PREVIEW_ENVIRONMENTS, environment)) {
-    const inner = INNER_PREVIEW_ENVIRONMENTS[environment];
+    const inner = previewInnerEnvironment(environment, content);
     return inner === undefined ? content : `\\begin{${inner}}${content}\\end{${inner}}`;
   }
   return `\\begin{${environment}}${content}\\end{${environment}}`;
+}
+
+function previewInnerEnvironment(environment: string, content: string): string | undefined {
+  const inner = INNER_PREVIEW_ENVIRONMENTS[environment];
+  if (!hasEquationTag(content)) return inner;
+  if (/^multline\*?$/.test(environment)) return 'silkpreviewmultline';
+  if (inner === 'aligned') return 'silkpreviewalign';
+  if (inner === 'alignedat') return 'silkpreviewalignat';
+  if (inner === 'gathered') return 'silkpreviewgather';
+  return inner;
+}
+
+function hasEquationTag(content: string): boolean {
+  const masked = maskTeXComments(content);
+  return [...masked.matchAll(/\\tag\b/g)].some((match) => !isEscaped(masked, match.index));
 }
 
 /**
@@ -79,10 +95,11 @@ function unwrapNestedEnvironment(
   const body = content.slice(bodyStart, bodyEnd);
   // 同名环境再嵌套时结构不明确，保持原样交给 MathJax 报错更安全。
   if (body.includes(`\\begin{${environment}}`)) return undefined;
-  const inner = INNER_PREVIEW_ENVIRONMENTS[environment];
+  const inner = previewInnerEnvironment(environment, body);
   const prefix = inner === undefined ? '' : `\\begin{${inner}}`;
   const suffix = inner === undefined ? '' : `\\end{${inner}}`;
-  const mapped = Math.min(Math.max(caretOffset - bodyStart, 0), body.length) + prefix.length;
+  const mapped = protectEnvironmentArguments(environment, body,
+    Math.min(Math.max(caretOffset - bodyStart, 0), body.length)) + prefix.length;
   return { content: `${prefix}${body}${suffix}`, caretOffset: mapped };
 }
 
@@ -239,7 +256,7 @@ export function buildPreviewExpression(
   const cleaned = removeNonVisualNumberingCommands(
     content,
     environmentSafeOffset,
-    table ? TABLE_NON_VISUAL_PATTERN : NON_VISUAL_PATTERN,
+    table ? TABLE_NON_VISUAL_PATTERN : hasEquationTag(content) ? /\\label[ \t]*\{[^{}\r\n]*\}/ : NON_VISUAL_PATTERN,
   );
   // `$$ \begin{equation} ... \end{equation} $$`：分隔符区域里再包一层顶层环境时，
   // 要和环境区域走同一套归一化，否则整条公式会因为嵌套报错而完全不显示。

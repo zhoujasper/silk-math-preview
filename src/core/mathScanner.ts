@@ -1,4 +1,5 @@
 import { DEFAULT_MATH_ENVIRONMENTS } from './completionCatalog';
+import { hasDefinitionDeclarations, parseDefinitions } from './definitionParser';
 import { collectMarkdownTableRegions } from './markdownTable';
 import { TABLE_ENVIRONMENTS } from './tablePreview';
 import { TIKZ_ENVIRONMENTS } from '../tikz/source';
@@ -165,50 +166,33 @@ function collectMarkdownInlineCodeRanges(
   fenceRanges: readonly TextRange[],
 ): TextRange[] {
   const ranges: TextRange[] = [];
+  // 每个反引号串只读取一次；预先配对相同长度，避免无匹配串反复搜索文档尾部。
+  const runs: TextRange[] = [];
   let cursor = 0;
   while (cursor < text.length) {
     cursor = text.indexOf('`', cursor);
     if (cursor < 0) break;
     const fence = rangeContaining(fenceRanges, cursor);
-    if (fence !== undefined) {
-      cursor = fence.end;
-      continue;
-    }
-
-    let runEnd = cursor + 1;
-    while (text[runEnd] === '`') {
-      runEnd += 1;
-    }
-    const runLength = runEnd - cursor;
-    let search = runEnd;
-    let closeEnd: number | undefined;
-    while (search < text.length) {
-      const skippedFence = rangeContaining(fenceRanges, search);
-      if (skippedFence !== undefined) {
-        search = skippedFence.end;
-        continue;
-      }
-      const candidate = text.indexOf('`', search);
-      if (candidate === -1) {
-        break;
-      }
-      let candidateEnd = candidate + 1;
-      while (text[candidateEnd] === '`') {
-        candidateEnd += 1;
-      }
-      if (candidateEnd - candidate === runLength) {
-        closeEnd = candidateEnd;
-        break;
-      }
-      search = candidateEnd;
-    }
-
-    if (closeEnd === undefined) {
-      cursor = runEnd;
-    } else {
-      ranges.push({ start: cursor, end: closeEnd });
-      cursor = closeEnd;
-    }
+    if (fence) { cursor = fence.end; continue; }
+    let end = cursor + 1;
+    while (text[end] === '`') end++;
+    runs.push({ start: cursor, end });
+    cursor = end;
+  }
+  const next = new Map<number, number>();
+  const matches = new Map<number, number>();
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const run = runs[i]!;
+    const length = run.end - run.start;
+    const close = next.get(length);
+    if (close !== undefined) matches.set(i, close);
+    next.set(length, i);
+  }
+  for (let i = 0; i < runs.length; i++) {
+    const close = matches.get(i);
+    if (close === undefined) continue;
+    ranges.push({ start: runs[i]!.start, end: runs[close]!.end });
+    i = close;
   }
   return ranges;
 }
@@ -218,10 +202,13 @@ function collectLatexCommentRanges(
   existingRanges: readonly TextRange[],
 ): TextRange[] {
   const comments: TextRange[] = [];
+  const significant = /[%\\]/g;
   let cursor = 0;
   while (cursor < text.length) {
-    cursor = text.indexOf('%', cursor);
-    if (cursor < 0) break;
+    significant.lastIndex = cursor;
+    const candidate = significant.exec(text);
+    if (!candidate) break;
+    cursor = candidate.index;
     const ignored = rangeContaining(existingRanges, cursor);
     if (ignored !== undefined) {
       cursor = ignored.end;
@@ -231,6 +218,29 @@ function collectLatexCommentRanges(
       const end = lineEndAfter(text, cursor);
       comments.push({ start: cursor, end });
       cursor = end;
+    } else if (text[cursor] === '\\' && !isEscaped(text, cursor)) {
+      // Literal TeX examples can contain unmatched dollars and environment heads.
+      // They must not change the math state of the surrounding document.
+      const verb = /^\\verb(?![A-Za-z@])\*?([^\r\n \t])/.exec(text.slice(cursor));
+      if (verb) {
+        const start = cursor + verb[0].length;
+        const lineEnd = lineEndAfter(text, start);
+        const close = text.indexOf(verb[1]!, start);
+        const end = close >= 0 && close < lineEnd ? close + 1 : lineEnd;
+        comments.push({ start: cursor, end });
+        cursor = end;
+        continue;
+      }
+      const literal = /^\\begin[ \t]*\{(verbatim\*?|Verbatim\*?|lstlisting|minted|comment)\}/.exec(text.slice(cursor));
+      if (literal) {
+        const closer = `\\end{${literal[1]}}`;
+        const close = text.indexOf(closer, cursor + literal[0].length);
+        const end = close < 0 ? text.length : close + closer.length;
+        comments.push({ start: cursor, end });
+        cursor = end;
+        continue;
+      }
+      cursor += 1;
     } else {
       cursor += 1;
     }
@@ -275,7 +285,7 @@ function collectMarkdownCodeLimits(
   return [
     ...inlineRanges.map((range) => innerInlineCodeRange(text, range)),
     ...fenceRanges.map((range) => innerFenceRange(text, range)),
-  ].filter((range) => range.end > range.start);
+  ].filter((range) => range.end > range.start).sort((left, right) => left.start - right.start);
 }
 
 function skipHorizontalSpace(text: string, start: number, end: number): number {
@@ -301,16 +311,12 @@ function expandRegionsOverInlineCode(
 ): MathRegion[] {
   if (inlineRanges.length === 0) return [...regions];
   return regions.map((region) => {
-    const wrap = inlineRanges.find((range) => {
-      if (region.start < range.start || region.end > range.end) return false;
-      const inner = innerInlineCodeRange(text, range);
-      const trimmedStart = skipHorizontalSpace(text, inner.start, inner.end);
-      const trimmedEnd = skipHorizontalSpaceEnd(text, inner.start, inner.end);
-      return region.start === trimmedStart && region.end === trimmedEnd;
-    });
-    if (wrap === undefined || (wrap.start === region.start && wrap.end === region.end)) {
-      return region;
-    }
+    // 行内代码区间有序且不重叠，只需检查包含公式起点的区间。
+    const wrap = rangeContaining(inlineRanges, region.start);
+    if (!wrap || region.end > wrap.end) return region;
+    const inner = innerInlineCodeRange(text, wrap);
+    if (region.start !== skipHorizontalSpace(text, inner.start, inner.end)
+      || region.end !== skipHorizontalSpaceEnd(text, inner.start, inner.end)) return region;
     return { ...region, start: wrap.start, end: wrap.end };
   });
 }
@@ -323,6 +329,7 @@ function collectIgnoredRanges(
   readonly ignored: TextRange[];
   readonly codeLimits: TextRange[];
   readonly inlineCode: TextRange[];
+  readonly mathFences: MathRegion[];
 } {
   const codeRanges =
     language === 'markdown'
@@ -333,6 +340,21 @@ function collectIgnoredRanges(
       ? collectMarkdownInlineCodeRanges(text, codeRanges)
       : [];
   const baseRanges = mergeRanges([...codeRanges, ...inlineCodeRanges]);
+  const mathFences: MathRegion[] = [];
+  for (const range of codeRanges) {
+    if (initialFence && range.start === 0) continue;
+    const headEnd = lineEndAfter(text, range.start);
+    const head = /^ {0,3}(`{3,}|~{3,})math[ \t]*\r?$/.exec(text.slice(range.start, headEnd));
+    if (!head) continue;
+    const marker = head[1]!;
+    const endWithoutNewline = range.end - (text[range.end - 1] === '\n' ? 1 : 0);
+    const tailStart = text.lastIndexOf('\n', endWithoutNewline - 1) + 1;
+    const tail = /^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/.exec(text.slice(tailStart, endWithoutNewline));
+    const closed = tailStart > headEnd && tail?.[1]?.[0] === marker[0] && (tail?.[1]?.length ?? 0) >= marker.length;
+    mathFences.push({ start: range.start, end: range.end, contentStart: nextLineStart(text, headEnd),
+      contentEnd: closed ? tailStart : range.end, kind: 'bracket-display', opener: marker + 'math',
+      closer: marker, closed: !!closed });
+  }
   const comments =
     language === 'latex'
       ? collectLatexCommentRanges(text, baseRanges)
@@ -343,6 +365,7 @@ function collectIgnoredRanges(
       ? collectMarkdownCodeLimits(text, codeRanges, inlineCodeRanges)
       : [],
     inlineCode: inlineCodeRanges,
+    mathFences,
   };
 }
 
@@ -440,7 +463,7 @@ function isParagraphBreak(text: string, offset: number): boolean {
     return !isEscaped(text, offset);
   }
   if (text[offset] !== '\r' && text[offset] !== '\n') return false;
-  return /^\r?\n[ \t]*\r?\n/.test(text.slice(offset, offset + 8));
+  return /^\r?\n[ \t]*\r?\n/.test(text.slice(offset));
 }
 
 function skipMathComment(text: string, offset: number): number | undefined {
@@ -450,15 +473,29 @@ function skipMathComment(text: string, offset: number): number | undefined {
   return nextLineStart(text, lineEndAfter(text, offset));
 }
 
+/** Only unambiguous document structure resets math; ordinary newlines remain legal. */
+function isDocumentBoundary(text: string, offset: number): boolean {
+  if (text[offset] !== '\\' || isEscaped(text, offset)) return false;
+  return /^\\(?:item|part|chapter|section|subsection|subsubsection|paragraph|subparagraph)(?![A-Za-z@])/.test(text.slice(offset))
+    || /^\\(?:begin|end)[ \t]*\{(?:document|enumerate|itemize|description)\}/.test(text.slice(offset));
+}
+
 function findFixedCloser(
   text: string,
   opener: DelimiterOpener,
   ignoredRanges: readonly TextRange[],
   codeLimits: readonly TextRange[],
+  missingClosers: Map<string, number>,
+  environmentClosers: Map<number, TextRange | undefined>,
 ): TextRange | undefined {
   const home = rangeContaining(codeLimits, opener.start);
   const searchEnd = home?.end ?? text.length;
-  const significant = /[$\\%\r\n]/g;
+  const missingKey = `${home?.start ?? -1}:${opener.closer}`;
+  const missingFrom = missingClosers.get(missingKey);
+  if (missingFrom !== undefined && opener.end >= missingFrom) return undefined;
+  const significant = /[$\\%{}\r\n]/g;
+  let groupDepth = 0;
+  let lastCommentEnd = opener.end;
   let cursor = opener.end;
   while (cursor < searchEnd) {
     significant.lastIndex = cursor;
@@ -474,17 +511,45 @@ function findFixedCloser(
     }
     const ignored = rangeContaining(ignoredRanges, cursor);
     if (ignored !== undefined) {
-      cursor =
-        text[ignored.start] === '%'
-          ? nextLineStart(text, ignored.end)
-          : ignored.end;
+      // Keep the newline after a comment visible to paragraph detection.
+      cursor = ignored.end;
       continue;
     }
     const commentEnd = skipMathComment(text, cursor);
     if (commentEnd !== undefined) {
-      cursor = commentEnd;
+      cursor = lineEndAfter(text, cursor);
+      // Markdown treats % as a comment only after entering math. A later
+      // recovered opener may sit inside text skipped by this particular search.
+      lastCommentEnd = cursor;
       continue;
     }
+    if ((text[cursor] === '{' || text[cursor] === '}') && !isEscaped(text, cursor)) {
+      groupDepth = Math.max(0, groupDepth + (text[cursor] === '{' ? 1 : -1));
+      cursor += 1;
+      continue;
+    }
+    // Complete nested environments own their delimiters, comments and paragraph breaks.
+    const head = readEnvironmentHead(text, cursor);
+    if (groupDepth === 0 && (isDocumentBoundary(text, cursor) || head?.kind === 'end'
+      || (opener.kind === 'dollar-inline' && head?.kind === 'begin' && /^(?:equation|align|alignat|flalign|gather|multline|displaymath)\*?$/.test(head.name))
+      || (opener.kind === 'dollar-inline' && text.startsWith('$$', cursor) && !isEscaped(text, cursor)))) return undefined;
+    if (head?.kind === 'begin') {
+      const nested = findEnvironmentCloser(text, {
+        start: head.start, end: head.end, opener: text.slice(head.start, head.end),
+        closer: `\\end{${head.name}}`, kind: 'environment', environment: head.name,
+      }, ignoredRanges, codeLimits, environmentClosers);
+      if (nested) {
+        cursor = nested.end;
+        // 不把被图形跳过的定界符记成后续恢复扫描中的“无匹配”区间。
+        lastCommentEnd = cursor;
+        continue;
+      }
+      // An unfinished nested environment must not borrow its internal dollar
+      // as an outer close: a later edit could otherwise invalidate a cached prefix.
+      return undefined;
+    }
+    if (groupDepth === 0 && (text.startsWith('\\[', cursor) || text.startsWith('\\(', cursor))
+      && !isEscaped(text, cursor)) return undefined;
     // 行内公式按 TeX 的真实规则：可以跨普通换行，遇到空行（段落结束）或 `\par` 才终止。
     // 只要一遇换行就放弃，`\scalebox{\tiny $` 换行再 `$}` 的写法会把后面的 `$` 全部配错对，
     // 从那里开始整篇文档的行内公式都会错位。
@@ -504,6 +569,7 @@ function findFixedCloser(
     }
     cursor += 1;
   }
+  missingClosers.set(missingKey, lastCommentEnd);
   return undefined;
 }
 
@@ -512,15 +578,19 @@ function findEnvironmentCloser(
   opener: DelimiterOpener,
   ignoredRanges: readonly TextRange[],
   codeLimits: readonly TextRange[],
+  cache: Map<number, TextRange | undefined>,
 ): TextRange | undefined {
+  if (cache.has(opener.start)) return cache.get(opener.start);
   const environmentName = opener.environment;
   if (environmentName === undefined) {
     return undefined;
   }
   const home = rangeContaining(codeLimits, opener.start);
   const searchEnd = home?.end ?? text.length;
-  let depth = 1;
-  const significant = /[\\%]/g;
+  const openings = [opener.start];
+  const parentDepths: number[] = [];
+  const significant = /[\\%{}]/g;
+  let groupDepth = 0;
   let cursor = opener.end;
   while (cursor < searchEnd) {
     significant.lastIndex = cursor;
@@ -545,16 +615,33 @@ function findEnvironmentCloser(
       continue;
     }
     const head = readEnvironmentHead(text, cursor);
+    if ((text[cursor] === '{' || text[cursor] === '}') && !isEscaped(text, cursor)) {
+      groupDepth = Math.max(0, groupDepth + (text[cursor] === '{' ? 1 : -1));
+    }
+    if (groupDepth === 0 && isDocumentBoundary(text, cursor)
+      && !['document', 'enumerate', 'itemize', 'description'].includes(environmentName)) {
+      for (const start of openings) cache.set(start, undefined);
+      return undefined;
+    }
     if (head?.name === environmentName) {
-      depth += head.kind === 'begin' ? 1 : -1;
-      if (depth === 0) {
-        return { start: head.start, end: head.end };
+      if (head.kind === 'begin') {
+        openings.push(head.start);
+        parentDepths.push(groupDepth);
+        groupDepth = 0;
+      }
+      else {
+        const start = openings.pop()!;
+        const close = { start: head.start, end: head.end };
+        cache.set(start, close);
+        if (openings.length === 0) return close;
+        groupDepth = parentDepths.pop() ?? 0;
       }
       cursor = head.end;
     } else {
       cursor += 1;
     }
   }
+  for (const start of openings) cache.set(start, undefined);
   return undefined;
 }
 
@@ -573,13 +660,33 @@ function recoveryBoundary(
   opener: DelimiterOpener,
   windowChars: number,
   codeLimits: readonly TextRange[],
+  ignoredRanges: readonly TextRange[],
+  recoveryEnvironments: ReadonlySet<string>,
 ): number {
   const home = rangeContaining(codeLimits, opener.start);
   const cap = Math.min(home?.end ?? text.length, opener.start + windowChars);
-  const remaining = text.slice(opener.end, cap);
-  const blankLine = /\r?\n[ \t]*\r?\n/.exec(remaining);
-  if (blankLine !== null) {
-    return opener.end + blankLine.index;
+  const significant = /[$\\%\r\n]/g;
+  significant.lastIndex = opener.end;
+  for (let match = significant.exec(text); match && match.index < cap; match = significant.exec(text)) {
+    const cursor = match.index;
+    const skipped = rangeContaining(ignoredRanges, cursor)
+      ?? (home === undefined ? rangeContaining(codeLimits, cursor) : undefined);
+    if (skipped) {
+      significant.lastIndex = skipped.end;
+      continue;
+    }
+    const commentEnd = skipMathComment(text, cursor);
+    if (commentEnd !== undefined) {
+      significant.lastIndex = lineEndAfter(text, cursor);
+      continue;
+    }
+    // Once closure failed, keep subsequent explicit formulas independently previewable.
+    if (isDocumentBoundary(text, cursor) || readEnvironmentHead(text, cursor)?.kind === 'end'
+      || readOpener(text, cursor, recoveryEnvironments) !== undefined) return cursor;
+    if (isParagraphBreak(text, cursor)
+      && (text[cursor] !== '\\' || opener.kind === 'dollar-inline' || opener.kind === 'paren-inline')) {
+      return cursor;
+    }
   }
   return cap;
 }
@@ -650,13 +757,33 @@ export function scanMathRegions(
     Math.floor(options.recoveryWindowChars ?? DEFAULT_RECOVERY_WINDOW),
   );
   const collected = collectIgnoredRanges(text, language, options.markdownInitialFence);
+  // 声明的替换文本不是正在执行的正文，尤其不能跨 begin/end 两个参数配环境。
+  // 不并入 ignoredRanges：Markdown 的宏收集仍需要读取这些声明。
+  let declarations: TextRange[] = [];
+  if (hasDefinitionDeclarations(text)) {
+    let declarationSource = text;
+    if (language === 'latex' && collected.ignored.length) {
+      const parts: string[] = [];
+      let from = 0;
+      for (const range of collected.ignored) {
+        parts.push(text.slice(from, range.start), text.slice(range.start, range.end).replace(/[^\r\n]/g, ' '));
+        from = range.end;
+      }
+      parts.push(text.slice(from));
+      declarationSource = parts.join('');
+    }
+    declarations = parseDefinitions(declarationSource).map(({ source }) => {
+      const container = rangeContaining(collected.codeLimits, source.startOffset);
+      return { start: source.startOffset, end: Math.min(source.endOffset, container?.end ?? text.length) };
+    });
+  }
   const ignoredRanges = collected.ignored;
   const tableRegions = language === 'markdown' && options.includePreviewContainers !== false
     ? collectMarkdownTableRegions(text, ignoredRanges)
     : [];
   // Markdown 行内代码 / fence 里的 $ 也要预览；定义解析仍用 ignoredRanges 跳过代码。
   const mathSkip = language === 'markdown'
-    ? tableRegions.map((region) => ({ start: region.start, end: region.end }))
+    ? mergeRanges([...tableRegions, ...collected.mathFences].map((region) => ({ start: region.start, end: region.end })))
     : tableRegions.length === 0
       ? ignoredRanges
       : mergeRanges([
@@ -664,7 +791,11 @@ export function scanMathRegions(
         ...tableRegions.map((region) => ({ start: region.start, end: region.end })),
       ]);
   const codeLimits = collected.codeLimits;
-  const regions: MathRegion[] = [...tableRegions];
+  const regions: MathRegion[] = [...tableRegions, ...collected.mathFences];
+  // Cache nested matches and unmatched openings during lookahead. Repeated
+  // unfinished environments otherwise rescan the entire remaining document.
+  const environmentClosers = new Map<number, TextRange | undefined>();
+  const missingClosers = new Map<string, number>();
 
   const significant = /[$\\]/g;
   let cursor = 0;
@@ -673,10 +804,21 @@ export function scanMathRegions(
     const candidate = significant.exec(text);
     if (!candidate) break;
     cursor = candidate.index;
-    const ignored = rangeContaining(mathSkip, cursor);
+    const ignored = rangeContaining(mathSkip, cursor) ?? rangeContaining(declarations, cursor);
     if (ignored !== undefined) {
       cursor = ignored.end;
       continue;
+    }
+    // GitHub 的 $`...`$ 包装：反引号只隔离 Markdown，不属于 TeX 表达式。
+    if (language === 'markdown' && isSingleDollar(text, cursor) && text[cursor + 1] === '`') {
+      const code = rangeContaining(collected.inlineCode, cursor + 1);
+      if (code?.start === cursor + 1 && text[code.end] === '$' && isSingleDollar(text, code.end)
+        && text[code.start + 1] !== '`') {
+        regions.push({ start: cursor, end: code.end + 1, contentStart: code.start + 1,
+          contentEnd: code.end - 1, kind: 'dollar-inline', opener: '$`', closer: '`$', closed: true });
+        cursor = code.end + 1;
+        continue;
+      }
     }
     const opener = readOpener(text, cursor, environments);
     if (opener === undefined) {
@@ -686,21 +828,21 @@ export function scanMathRegions(
 
     const close =
       opener.kind === 'environment'
-        ? findEnvironmentCloser(text, opener, mathSkip, codeLimits)
-        : findFixedCloser(text, opener, mathSkip, codeLimits);
+        ? findEnvironmentCloser(text, opener, mathSkip, codeLimits, environmentClosers)
+        : findFixedCloser(text, opener, mathSkip, codeLimits, missingClosers, environmentClosers);
     if (close !== undefined) {
       const region = makeClosedRegion(opener, close);
       regions.push(region);
       cursor = region.end;
     } else {
-      const boundary = recoveryBoundary(text, opener, recoveryWindow, codeLimits);
+      const boundary = recoveryBoundary(text, opener, recoveryWindow, codeLimits, mathSkip, environments);
       const region = makeRecoveredRegion(opener, boundary);
       regions.push(region);
       cursor = Math.max(opener.end, boundary);
     }
   }
 
-  if (tableRegions.length > 0) regions.sort((left, right) => left.start - right.start);
+  if (tableRegions.length > 0 || collected.mathFences.length > 0) regions.sort((left, right) => left.start - right.start);
   return {
     regions: expandRegionsOverInlineCode(text, regions, collected.inlineCode),
     ignoredRanges,
@@ -738,7 +880,7 @@ export function findMathRegionAt(
       high = middle - 1;
     } else if (
       offset > region.end ||
-      (offset === region.end && region.closed)
+      (offset === region.end && (region.closed || regions[middle + 1]?.start === offset))
     ) {
       low = middle + 1;
     } else {

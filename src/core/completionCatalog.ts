@@ -17,6 +17,14 @@ export const DEFAULT_MATH_ENVIRONMENTS = Object.freeze([
   'flalign*',
   'displaymath',
   'math',
+  'matrix',
+  'pmatrix',
+  'bmatrix',
+  'Bmatrix',
+  'vmatrix',
+  'Vmatrix',
+  'smallmatrix',
+  'cases',
 ] as const);
 
 /** 只收录歧义很低、编辑距离小且常见的拼写错误。 */

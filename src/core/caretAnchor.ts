@@ -1,3 +1,4 @@
+import { hasDefinitionDeclarations, maskTeXComments, parseDefinitions } from './definitionParser';
 import type {
   CaretAnchor,
   CaretAnchorReason,
@@ -21,6 +22,7 @@ const PROTECTED_ARGUMENTS: Readonly<Record<string, number>> = {
   textcolor: 1, color: 1, colorbox: 1, fcolorbox: 2, definecolor: 3, colorlet: 2,
   class: 1, style: 1, cssId: 1, href: 1, label: 1, ref: 1, eqref: 1, cite: 1, tag: 1,
   DeclareMathOperator: 1, newcommand: 1, renewcommand: 1,
+  operatorname: 1,
 };
 // `\begin{...}`/`\end{...}` 由 readEnvironmentHead 当作整体保护，不必重复列入。
 
@@ -293,6 +295,9 @@ function protectedArgumentSeam(
       continue;
     }
     let scan = skipWhitespace(text, command.end);
+    if (text[scan] === '*' && /^(?:tag|operatorname|DeclareMathOperator|newcommand|renewcommand)$/.test(command.name)) {
+      scan = skipWhitespace(text, scan + 1);
+    }
     let protectedEnd = command.end;
     for (let index = 0; index < protectedCount; index += 1) {
       if (text[scan] !== '{') break;
@@ -403,7 +408,7 @@ function safeArgumentSeam(text: string, requestedOffset: number): CaretAnchor | 
  * 把公式内容内的光标吸附到不会拆开 TeX token 的 seam。
  * 输入和输出均为相对该公式字符串的 UTF-16 offset。
  */
-export function anchorCaret(text: string, requestedOffset: number): CaretAnchor {
+function anchorCaretInternal(text: string, requestedOffset: number): CaretAnchor {
   const integerOffset = Number.isFinite(requestedOffset)
     ? Math.trunc(requestedOffset)
     : 0;
@@ -460,5 +465,39 @@ export function anchorCaret(text: string, requestedOffset: number): CaretAnchor 
     exact: false,
     reason: unsafe.reason,
     unsafeRange: { start: unsafe.start, end: unsafe.end },
+  };
+}
+
+/** 声明和列格式属于语法数据；光标不能注入其中或插在表格横线之前。 */
+export function anchorCaret(source: string, requestedOffset: number): CaretAnchor {
+  const text = maskTeXComments(source);
+  let protectedOffset = requestedOffset;
+  if (hasDefinitionDeclarations(text)) {
+    const definition = parseDefinitions(text).find(({ source }) =>
+      requestedOffset > source.startOffset && requestedOffset < source.endOffset);
+    if (definition) protectedOffset = definition.source.endOffset;
+  }
+  const heads = /\\begin\s*\{(?:array|subarray|alignat\*?|alignedat)\}/g;
+  for (const match of text.matchAll(heads)) {
+    if (isEscaped(text, match.index)) continue;
+    let start = skipWhitespace(text, match.index + match[0].length);
+    const optional = groupEnd(text, start, '[', ']');
+    if (optional) start = skipWhitespace(text, optional);
+    const end = groupEnd(text, start);
+    if (end && requestedOffset > match.index && requestedOffset <= end) {
+      protectedOffset = end;
+      break;
+    }
+  }
+  const anchor = anchorCaretInternal(text, protectedOffset);
+  let offset = anchor.offset;
+  for (;;) {
+    const start = skipWhitespace(text, offset);
+    const rule = /^\\(?:hline|hdashline)\b/.exec(text.slice(start));
+    if (!rule || isEscaped(text, start)) break;
+    offset = start + rule[0].length;
+  }
+  return offset === anchor.offset && protectedOffset === requestedOffset ? anchor : {
+    ...anchor, requestedOffset, offset, exact: false, reason: 'command-argument-seam',
   };
 }

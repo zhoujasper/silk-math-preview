@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { windowsPowerShellCommands } from '../core/windowsPowerShell';
 
 export const MAC_IMAGE_CLIPBOARD = `ObjC.import('AppKit');
 var png = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
@@ -29,9 +30,9 @@ try {
   $stream.Dispose()
 }`;
 
-export function imageClipboardCommands(platform: NodeJS.Platform, wayland: boolean): readonly { command: string; args: string[] }[] {
+export function imageClipboardCommands(platform: NodeJS.Platform, wayland: boolean): readonly { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> }[] {
   if (platform === 'darwin') return [{ command: '/usr/bin/osascript', args: ['-l', 'JavaScript', '-e', MAC_IMAGE_CLIPBOARD] }];
-  if (platform === 'win32') return [{ command: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(WINDOWS_IMAGE_CLIPBOARD, 'utf16le').toString('base64')] }];
+  if (platform === 'win32') return windowsPowerShellCommands(WINDOWS_IMAGE_CLIPBOARD);
   if (platform === 'linux') {
     const x11 = { command: 'xclip', args: ['-selection', 'clipboard', '-target', 'image/png', '-in'] };
     const wl = { command: 'wl-copy', args: ['--type', 'image/png'] };
@@ -45,7 +46,7 @@ export async function writeImageClipboard(png: Buffer, signal: AbortSignal): Pro
     try {
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) { reject(new Error('cancelled')); return; }
-        const child = spawn(spec.command, spec.args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+        const child = spawn(spec.command, spec.args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'], ...(spec.env ? { env: { ...process.env, ...spec.env } } : {}) });
         let settled = false;
         const abort = () => { child.kill(); finish(new Error('cancelled')); };
         const timer = setTimeout(() => { child.kill(); finish(new Error('clipboard-timeout')); }, 10_000);

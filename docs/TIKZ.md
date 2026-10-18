@@ -19,13 +19,18 @@ globalStorage 目录，取消或失败的下载不会被当作已安装。下载
 
 支持 `.tex`、Markdown（包括 `tikz` 代码块）和 Jupyter 单元格中被启用的语言。
 `tikzpicture`、`tikzcd`、`pgfpicture`、`circuitikz` 会作为整体识别，坐标标签中的
-`$x$` 不会抢走图形预览。`axis` / `addplot` 自动加载 pgfplots；可使用常见的
-`\usetikzlibrary`、`\usepgfplotslibrary`、`\tikzset`、`\pgfplotsset` 和已有自定义宏。
+`$x$` 不会抢走图形预览；整张图包在 `$…$`、`$$…$$`、`\(…\)` 或 `\[…\]` 中时也保持完整。`axis` / `addplot` 自动加载 pgfplots；可使用常见的
+`\usetikzlibrary`、`\usepgfplotslibrary`、`\tikzset`、`\tikzcdset`、`\pgfplotsset` 和已有自定义宏。
+
+同一个数学表达式含多张图时，保留外侧的运算符、括号、文字及所有图形，由 TeX 整体排版；Markdown math 围栏也采用此路径。复制 PNG 的等比例缩放同步调整描边宽度。
 
 连续输入合并约 80 ms；后台只处理当前请求和最新的等待请求。缺少结束环境时只补
 渲染副本，不改文件；其他语法尚未写完时保留该图形的上一张成功图片。单次渲染超过
 15 秒会回收 Worker，空闲时间默认 60 秒。缩放沿用菜单中的预览大小设置。
 文字转成矢量路径，图片保留白底和原始绘图颜色，不依赖系统字体或联网加载字体。
+复制 PNG 时保留白底和白色节点遮挡，其余彩色墨迹转黑；嵌套节点保持独立描边，
+三角形和矩形轮廓不会被文字层的无描边状态隐藏。内置 BaKoMa 字体与 XeLaTeX 的
+Latin Modern 等系统字体可能略有不同，字形和尺寸不保证逐像素一致。
 
 引擎最多保留一份宏包检查点和一份定义检查点；修改外部 `\def` 时复用已加载宏包。
 每帧恢复 WASM 全局、内存及文件状态，图形内的全局定义不会污染下一帧。
@@ -51,6 +56,10 @@ globalStorage 目录，取消或失败的下载不会被当作已安装。下载
 图形之前的原生声明按源码顺序继承，包含 `\def` / `\gdef` / `\edef` / `\xdef`、
 `\let`、带定界参数的宏、`\newcommand` / `\renewcommand`、绘图样式和常用条件分支。
 保留分组作用域；定义本体不会提前执行，图形之后的重定义不会影响当前图形。
+保留 `\begin{document}` 边界：类文件中的数学算子等导言声明在正文前执行，正文中的
+局部重定义和未闭合分组仍在原作用域内。未加载的页面排版宏包所拥有的无关
+`\renewcommand` 不会阻断图形；已有目标仍正常重定义，图形若使用缺失命令则明确报错。
+本地类继承包含 `\LoadClass` / `\LoadClassWithOptions`，宏包支持 `\RequirePackageWithOptions`。
 本地 `.sty/.cls/.tex` 依赖及未保存的缓冲区可提供声明；导言区不再截断在 128,000 字符，
 当前文件前缀上限 8 MiB，提取并展开后的上下文与图片源码合计上限 200,000 字符。
 动态图形可执行真实 TeX；导言区提取不等同于运行整份文档，高级 catcode、动态依赖、
@@ -81,3 +90,12 @@ before each frame. Complex pictures can take longer than formulas.
 
 Implementation references: [Node-TikZJax](https://github.com/prinsss/node-tikzjax),
 [PGF/TikZ](https://github.com/pgf-tikz/pgf), [pgfplots](https://github.com/pgf-tikz/pgfplots).
+
+Preamble declarations such as `\DeclareMathOperator` run before the original
+`\begin{document}` boundary; body redefinitions retain their local scopes.
+Standalone operators automatically load amsmath. Redefinitions of absent commands
+from omitted page-layout packages are skipped, but actually using an unsupported
+command in a picture still reports an error. Local dependency traversal includes
+`\LoadClass`, `\LoadClassWithOptions`, and `\RequirePackageWithOptions`.
+
+Mixed math expressions retain surrounding operators, delimiters, text and multiple pictures through native TeX layout, including Markdown math fences. Uniform TikZ PNG scaling also scales stroke widths.

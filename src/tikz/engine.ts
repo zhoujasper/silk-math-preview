@@ -221,9 +221,12 @@ export class TikzEngine {
     const background = document.createElementNS(SVG_NS, 'rect');
     for (const [index, key] of ['x', 'y', 'width', 'height'].entries()) background.setAttribute(key, String(bounds[index]));
     background.setAttribute('fill', '#fff');
+    background.setAttribute('data-bgcolor', '#fff');
+    background.setAttribute('stroke', 'none');
     svg.insertBefore(background, svg.firstChild);
     svg.setAttribute('width', `${widthPx}px`);
     svg.setAttribute('height', `${heightPx}px`);
+    svg.setAttribute('data-silk-tikz', 'true');
     const result = new XMLSerializer().serializeToString(svg);
     if (result.length > 4 * 1024 * 1024) throw new Error('TikZ SVG is too large');
     return { svg: result, widthPx, heightPx };

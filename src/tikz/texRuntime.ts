@@ -2,6 +2,7 @@
 // Synchronous, memory-only I/O for the pinned TikZJax TeX ABI.
 import { createReadStream } from 'node:fs';
 import { createGunzip } from 'node:zlib';
+import { tikzDocumentContext } from './context';
 
 const PAGE = 65_536;
 const PAGES = 1100;
@@ -87,13 +88,13 @@ export class TexRuntime {
         this.header = this.cached = undefined;
         this.restore(this.base);
         this.checkpointing = CONTEXT;
-        this.open('input.tex', Buffer.from(`${preamble}\n\\begin{document}\n\\input{${CONTEXT}}%\n\\end{document}\n`));
+        this.open('input.tex', Buffer.from(`${preamble}\n\\input{${CONTEXT}}%\n\\end{document}\n`));
         this.header = { key: preamble, snapshot: this.checkpoint(this.base) };
       }
       if (this.cached?.key !== context) {
         this.cached = undefined;
         this.restore(this.header.snapshot);
-        this.context = Buffer.from(`${context}\n\\input{${FRAME}}%\n`);
+        this.context = Buffer.from(`${tikzDocumentContext(context)}\n\\input{${FRAME}}%\n`);
         this.checkpointing = FRAME;
         this.rewind();
         this.cached = { key: context, snapshot: this.checkpoint(this.header.snapshot) };

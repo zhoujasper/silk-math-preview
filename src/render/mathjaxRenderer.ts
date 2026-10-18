@@ -3,7 +3,16 @@ import { liteAdaptor } from '@mathjax/src/js/adaptors/liteAdaptor.js';
 import { RegisterHTMLHandler } from '@mathjax/src/js/handlers/html.js';
 import { TeX } from '@mathjax/src/js/input/tex.js';
 import { SVG } from '@mathjax/src/js/output/svg.js';
+import type { SvgWrapper, SvgWrapperClass } from '@mathjax/src/js/output/svg/Wrapper.js';
+import type { SvgWrapperFactory } from '@mathjax/src/js/output/svg/WrapperFactory.js';
+import type { MmlNode } from '@mathjax/src/js/core/MmlTree/MmlNode.js';
+import { SvgMtable, type SvgMtableNTD } from '@mathjax/src/js/output/svg/Wrappers/mtable.js';
 import { MathJaxTexFont } from '@mathjax/mathjax-tex-font/js/svg.js';
+import { Configuration } from '@mathjax/src/js/input/tex/Configuration.js';
+import { EnvironmentMap } from '@mathjax/src/js/input/tex/TokenMap.js';
+import ParseMethods from '@mathjax/src/js/input/tex/ParseMethods.js';
+import { AmsMethods } from '@mathjax/src/js/input/tex/ams/AmsMethods.js';
+import type { ParseMethod } from '@mathjax/src/js/input/tex/Types.js';
 
 import '@mathjax/src/js/input/tex/base/BaseConfiguration.js';
 import '@mathjax/src/js/input/tex/ams/AmsConfiguration.js';
@@ -27,6 +36,23 @@ const WIDTH = 120 * EM;
 const MAX_CONTEXTS = 2;
 const MAX_SVG_BYTES = 2 * 1024 * 1024;
 const MAX_TEX_BUFFER = 256 * 1024;
+// 仅预览副本的外层显示环境可以在隔离分组中编号；原生 aligned 等仍遵循 MathJax 规则。
+function sandboxEquation(method: string): ParseMethod {
+  return (parser, ...args) => {
+    const top = parser.stack.Top();
+    const previous = top.getProperty('nestStart');
+    top.setProperty('nestStart', true);
+    try { return AmsMethods[method]!(parser, ...args); }
+    finally { top.setProperty('nestStart', previous); }
+  };
+}
+new EnvironmentMap('silk-preview-equations', ParseMethods.environment as ParseMethod, {
+  silkpreviewalign: [sandboxEquation('EqnArray'), null, false, true, 'rl', 'bt', '0em 2em'],
+  silkpreviewgather: [sandboxEquation('EqnArray'), null, false, true, 'c', 'm'],
+  silkpreviewalignat: [sandboxEquation('AlignAt'), null, false, true],
+  silkpreviewmultline: [sandboxEquation('Multline'), null, false],
+});
+Configuration.create('silk-preview-equations', { handler: { environment: ['silk-preview-equations'] } });
 /** 非滚动输出沿用宽度适配；编辑器浮层以 fullSize 保留自然字号。 */
 const MAX_PANEL_EX = 130;
 
@@ -70,12 +96,33 @@ class PreviewTeX extends TeX<unknown, unknown, unknown> {
   }
 }
 class PreviewSVG extends SVG<unknown, unknown, unknown> {
+  protected override createRoot(wrapper: Parameters<SVG<unknown, unknown, unknown>['processMath']>[0]): [unknown, unknown] {
+    // 独立图片没有网页容器，百分比根尺寸必须使用 MathJax 的实际布局尺寸。
+    const { w, h, d } = wrapper.getOuterBBox();
+    return this.createSVG(h, d, w);
+  }
   releaseFrame(): void {
     this.math = null!;
     this.table = null!;
     this.container = null!;
     this.document = null!;
     this.nodeMap = null!;
+  }
+}
+
+// 上游接口继承多个构造签名；保留静态成员并明确实际 SVG 构造签名。
+const PreviewMtableBase: Pick<SvgWrapperClass<unknown, unknown, unknown>, keyof SvgWrapperClass<unknown, unknown, unknown>> & {
+  new (factory: SvgWrapperFactory<unknown, unknown, unknown>, node: MmlNode, parent?: SvgWrapper<unknown, unknown, unknown>): SvgMtableNTD<unknown, unknown, unknown>;
+} = SvgMtable;
+class PreviewMtable extends PreviewMtableBase {
+  // MathJax 默认用两层 100% SVG 和页面 CSS 分别定位公式和编号。
+  // 独立图片直接使用布局盒的左右留白，保留标签内容和行基线。
+  topTable(svg: unknown, labels: unknown, side: string): void {
+    const { w, L, R } = this.getBBox();
+    const labelWidth = this.getTableData().L;
+    this.adaptor.removeAttribute(labels, 'transform');
+    this.place(side === 'left' ? -L : (this.pWidth || w) + R - labelWidth, 0, labels);
+    this.adaptor.append(svg, labels);
   }
 }
 
@@ -92,6 +139,7 @@ const SHARED_OUTPUT = new PreviewSVG({
   exFactor: EX / EM,
   fontData: MathJaxTexFont,
 });
+SHARED_OUTPUT.factory.setNodeClass('mtable', PreviewMtable as unknown as SvgWrapperClass<unknown, unknown, unknown>);
 
 SHARED_OUTPUT.preFilters.add((data: unknown) => {
   const { math } = data as { math: { inputJax: TeX<unknown, unknown, unknown> } };
@@ -522,20 +570,22 @@ function innerSvgToGroup(openTag: string, children: string, clipSeq: number): st
   const existing = attributeValue(attrs, 'transform');
   const className = attributeValue(attrs, 'class');
   const classAttr = className ? ` class="${className}"` : '';
-  const extra = existing ? ` ${existing}` : '';
+  const extra = existing ? `${existing} ` : '';
   if (viewBox && width !== undefined && height !== undefined && viewBox.width > 0 && viewBox.height > 0) {
     const clipped = clipInnerSvgChildren(children, viewBox, x, y, width, height);
     if (clipped) {
       return extra || classAttr
-        ? `<g${classAttr} transform="translate(0,0)${extra}">${clipped}</g>`
+        ? `<g${classAttr} transform="${extra.trim()}">${clipped}</g>`
         : clipped;
     }
+    // Keep the clip in viewport coordinates; transforming this same group would
+    // also move the clip and cut stretched delimiters at the wrong baseline.
     const clipId = `silk-clip-${clipSeq}`;
     const sx = width / viewBox.width;
     const sy = height / viewBox.height;
-    return `<g${classAttr} transform="translate(${x},${y})${extra}"><clipPath id="${clipId}"><rect x="0" y="0" width="${width}" height="${height}"/></clipPath><g clip-path="url(#${clipId})" transform="scale(${sx},${sy}) translate(${-viewBox.minX},${-viewBox.minY})">${children}</g></g>`;
+    return `<g${classAttr} transform="${extra}translate(${x},${y})"><clipPath id="${clipId}"><rect x="0" y="0" width="${width}" height="${height}"/></clipPath><g clip-path="url(#${clipId})"><g transform="scale(${sx},${sy}) translate(${-viewBox.minX},${-viewBox.minY})">${children}</g></g></g>`;
   }
-  return `<g${classAttr} transform="translate(${x},${y})${extra}">${children}</g>`;
+  return `<g${classAttr} transform="${extra}translate(${x},${y})">${children}</g>`;
 }
 
 /**
@@ -551,7 +601,7 @@ export function expandViewBoxToContent(svg: string): string {
   let minY = viewBox.minY;
   let maxX = viewBox.minX + viewBox.width;
   let maxY = viewBox.minY + viewBox.height;
-  const stack: Affine[] = [parseTransform(attributeValue(open, 'transform'))];
+  const stack = [{ matrix: parseTransform(attributeValue(open, 'transform')), clipped: false }];
   const tag = /<g\b([^>]*)>|<\/g>|<path\b([^>]*)>/gi;
   let match: RegExpExecArray | null;
   while ((match = tag.exec(svg))) {
@@ -562,17 +612,20 @@ export function expandViewBoxToContent(svg: string): string {
     }
     const attrs = match[1] ?? match[2] ?? '';
     const local = parseTransform(attributeValue(attrs, 'transform'));
-    const composed = multiplyAffine(stack[stack.length - 1] ?? IDENTITY, local);
+    const parent = stack[stack.length - 1]!;
+    const composed = multiplyAffine(parent.matrix, local);
+    // Origins inside a clipped viewport are not visible content bounds.
+    const clipped = parent.clipped || attributeValue(attrs, 'clip-path') !== undefined;
     const x = composed.e;
     const y = composed.f;
     const outside = x < minX || x > maxX || y < minY || y > maxY;
-    if (outside) {
+    if (outside && !clipped) {
       minX = Math.min(minX, x - VIEWBOX_GLYPH_EXTENT);
       minY = Math.min(minY, y - VIEWBOX_GLYPH_EXTENT);
       maxX = Math.max(maxX, x + VIEWBOX_GLYPH_EXTENT);
       maxY = Math.max(maxY, y + VIEWBOX_GLYPH_EXTENT);
     }
-    if (token.startsWith('<g')) stack.push(composed);
+    if (token.startsWith('<g') && !token.endsWith('/>')) stack.push({ matrix: composed, clipped });
   }
   const width = maxX - minX;
   const height = maxY - minY;
@@ -1261,7 +1314,7 @@ function createRenderContext(markUnknownCommands: boolean, packages: readonly st
   const tex = new PreviewTeX({
     // noundefined 把未定义命令渲染成红色原文，一个笔误不再让整条公式消失。
     packages: [
-      'base', 'ams', 'begingroup', 'newcommand', 'color', 'html', 'boldsymbol', 'cancel',
+      'base', 'ams', 'begingroup', 'newcommand', 'color', 'html', 'boldsymbol', 'cancel', 'silk-preview-equations',
       ...packages,
       ...(markUnknownCommands ? ['noundefined'] : []),
     ],
@@ -1382,6 +1435,7 @@ export class MathJaxSvgRenderer {
     );
     const siOptions = context.tex.parseOptions.packageData.get(SI_OPTIONS_KEY);
     try {
+      context.tex.reset();
       // `\\begingroupSandbox` isolates definitions by treating the next TeX atom as
       // the complete sandbox.  Passing the expression without braces therefore
       // rendered only its first atom (for example, `u\\equiv-1` became just `u`).

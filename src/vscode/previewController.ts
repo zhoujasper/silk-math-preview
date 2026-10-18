@@ -10,11 +10,12 @@ import {
 } from '../core/definitionPreview';
 import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
 import { recoverIncompleteTex } from '../core/incompleteTex';
-import { advanceMarkdownFenceState, findMathRegionAt, mathRegionContent, regionContainsOffset, scanMathRegions, selectionOverlapsRegion } from '../core/mathScanner';
+import { mathRegionContent, regionContainsOffset, selectionOverlapsRegion } from '../core/mathScanner';
 import { buildPreviewExpression } from '../core/previewExpression';
 import { decidePreviewSelection, rebasePreviewRegion, samePreviewRegion, shouldRetainLastPreviewFrame } from '../core/previewSelection';
 import {
   floatingPreviewLayout,
+  hasAdvancedPreviewCss,
   notebookPreviewSpacerCss,
   notebookPreviewSpacerPx,
   resolveEditorMetrics,
@@ -33,11 +34,13 @@ import {
 } from './preview-style';
 import type { PreviewCss } from '../core/previewCss';
 import { isTablePreviewRegion, TABLE_PREVIEW_SCALE } from '../core/tablePreview';
-import type { MarkdownFenceState, MathRegion, MathScanOptions } from '../core/types';
+import type { MathRegion } from '../core/types';
+import { MathDocumentIndex } from '../core/mathDocumentIndex';
 import { WeightedLru } from '../core/weightedLru';
 import { RenderClient, type RenderClientStats } from '../render/renderClient';
 import { containsTikz, TIKZ_ENVIRONMENTS } from '../tikz/source';
 import type { TikzService } from './tikzService';
+import { noteEditorSelection } from './editorInteraction';
 
 export interface PreviewDefinitionSnapshot {
   readonly fingerprint: string;
@@ -66,12 +69,6 @@ interface CachedSvg {
   readonly caretY?: number;
   readonly caretX?: number;
   readonly renderMs: number;
-}
-
-interface MarkdownFenceCache {
-  version: number;
-  /** 第 i 项是第 i 行起点的状态；null 表示不在 fenced code 内。 */
-  readonly states: Array<MarkdownFenceState | null>;
 }
 
 interface ActivePreview {
@@ -141,7 +138,10 @@ function readSettings(): PreviewSettings {
     showCaret: config.get('showCaret', true),
     maxFormulaChars: config.get('maxFormulaChars', 20_000),
     rendererIdleMs: config.get('rendererIdleMs', 60_000),
-    previewScale: config.get('previewScale', 1.35),
+    previewScale: (() => {
+      const value = config.get<number>('previewScale', 1.35);
+      return Number.isFinite(value) ? Math.min(3, Math.max(0.5, value)) : 1.35;
+    })(),
     showRenderErrors: config.get('showRenderErrors', true),
     markUnknownCommands: config.get('markUnknownCommands', true),
     previewDefinitions: config.get('previewDefinitions', false),
@@ -256,7 +256,7 @@ function cacheKey(
 }
 
 /**
- * 编辑和选区热路径始终只扫描光标附近的有界窗口；全文诊断由语言功能层在停输后单独完成。
+ * 公式索引保留完整上下文；光标移动复用索引，闭合公式内的编辑只重扫该公式。
  */
 export class PreviewController implements vscode.Disposable {
   private readonly decoration = vscode.window.createTextEditorDecorationType({
@@ -269,7 +269,7 @@ export class PreviewController implements vscode.Disposable {
   private scrollPreview: import('./preview-scroll').ScrollablePreview | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly svgCache = new WeightedLru<CachedSvg>(SVG_CACHE_ENTRIES, SVG_CACHE_BYTES);
-  private readonly markdownFenceCaches = new Map<string, MarkdownFenceCache>();
+  private mathIndex: { readonly document: vscode.TextDocument; readonly index: MathDocumentIndex } | undefined;
   private readonly scanSamples: number[] = [];
   private readonly frameEmitter = new vscode.EventEmitter<PreviewFrame>();
   /** 每次渲染结果（成功、失败、清空）都会推一帧，供控制面板实时显示。 */
@@ -319,13 +319,20 @@ export class PreviewController implements vscode.Disposable {
         this.schedule(editor, 0);
       }),
       vscode.window.onDidChangeTextEditorSelection((event) => {
+        noteEditorSelection(event);
         this.handleSelectionChange(event);
       }),
       vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
         this.repositionPaint(event.textEditor);
       }),
       vscode.workspace.onDidChangeTextDocument((event) => {
-        this.invalidateMarkdownFenceCache(event);
+        if (this.mathIndex?.document === event.document) {
+          const index = this.mathIndex.index;
+          const scans = index.scans;
+          const started = performance.now();
+          index.applyChanges(event.document.version, event.contentChanges);
+          if (index.scans !== scans) this.recordScan(performance.now() - started);
+        }
         this.rebaseActivePreview(event);
         const editor = vscode.window.activeTextEditor;
         if (editor?.document === event.document) {
@@ -336,7 +343,7 @@ export class PreviewController implements vscode.Disposable {
         }
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
-        this.markdownFenceCaches.delete(document.uri.toString());
+        if (this.mathIndex?.document === document) this.mathIndex = undefined;
       }),
       ...(policy.onDidChange
         ? [policy.onDidChange(() => {
@@ -549,6 +556,7 @@ export class PreviewController implements vscode.Disposable {
     if (this.scheduleTimer) clearTimeout(this.scheduleTimer);
     if (this.definitionRefreshTimer) clearTimeout(this.definitionRefreshTimer);
     if (this.failureTimer) clearTimeout(this.failureTimer);
+    this.mathIndex = undefined;
     this.clearAllVisible();
     this.decoration.dispose();
     for (const disposable of this.disposables) disposable.dispose();
@@ -574,7 +582,16 @@ export class PreviewController implements vscode.Disposable {
     this.scheduleTimer = setTimeout(() => {
       this.scheduleTimer = undefined;
       this.pendingEditor = undefined;
-      void this.update(editor, epoch);
+      void this.update(editor, epoch).catch((error: unknown) => {
+        if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
+        const message = error instanceof Error ? error.message : String(error);
+        this.trace(`preview update failed: ${message}`);
+        const hit = this.lastRegionHit;
+        if (editor && hit?.uri === editor.document.uri.toString() && hit.version === editor.document.version) {
+          this.emitFrame(editor, hit.region, { status: 'error', message });
+          this.scheduleFailureNotice(editor, hit.region, this.editorMetrics(editor.document), message);
+        }
+      });
     }, wait);
   }
 
@@ -646,21 +663,11 @@ export class PreviewController implements vscode.Disposable {
     // 浮层已经在显示时 Worker 必然是热的，这一趟预扫描只是重复开销。
     const editing = this.previewVisible && this.activePreview?.editor === editor;
     if (!editing) {
-      const documentLength = document.offsetAt(document.lineAt(document.lineCount - 1).range.end);
-      const preliminaryRoughStart = Math.max(0, documentOffset - 4_096);
-      const preliminaryStartLine = document.positionAt(preliminaryRoughStart).line;
-      const preliminaryStart = document.offsetAt(document.lineAt(preliminaryStartLine).range.start);
-      const preliminaryEnd = Math.min(documentLength, documentOffset + 4_096);
-      const preliminary = document.getText(new vscode.Range(
-        document.positionAt(preliminaryStart),
-        document.positionAt(preliminaryEnd),
-      ));
-      const preliminaryRegions = scanMathRegions(
-        preliminary,
-        this.mathScanOptions(document, [], preliminaryStartLine),
-      ).regions;
-      const preliminaryRegion = findMathRegionAt(preliminaryRegions, documentOffset - preliminaryStart);
-      if (preliminaryRegion && !containsTikz(preliminary.slice(preliminaryRegion.start, preliminaryRegion.end))) {
+      const known = this.definitions.peekSnapshot?.(document);
+      const preliminaryRegion = this.findCurrentRegion(document, documentOffset, known ?? {
+        fingerprint: '', prelude: '', commands: [], environments: [], limitations: [],
+      });
+      if (preliminaryRegion && !TIKZ_ENVIRONMENTS.some((name) => name === preliminaryRegion.environment)) {
         // 与首次依赖解析并行，隐藏大部分 Worker 启动延迟。
         this.renderClient.prepare();
       }
@@ -848,7 +855,8 @@ export class PreviewController implements vscode.Disposable {
         ...(response.caretX !== undefined ? { caretX: response.caretX } : {}),
         renderMs: response.renderMs,
       };
-      this.svgCache.set(key, rendered, Buffer.byteLength(response.svg, 'utf8'));
+      // 缓存实际保留键和 base64 URI；只统计原 SVG 会低估大图及 TikZ 上下文。
+      this.svgCache.set(key, rendered, 2 * (key.length + rendered.uri.toString().length) + 128);
     }
     if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
     this.applyDecoration(editor, region, rendered, metrics, key);
@@ -1060,100 +1068,25 @@ export class PreviewController implements vscode.Disposable {
     snapshot: PreviewDefinitionSnapshot,
     rememberMiss = true,
   ): MathRegion | undefined {
-    const hit = this.lastRegionHit;
-    if (
-      hit
-      && hit.uri === document.uri.toString()
-      && hit.version === document.version
-      && regionContainsOffset(hit.region, offset)
-    ) {
-      return hit.region;
-    }
     const started = performance.now();
-    const maxChars = this.settings.maxFormulaChars;
-    let base = Math.max(0, offset - maxChars - 512);
-    const baseLine = document.positionAt(base).line;
-    base = document.offsetAt(document.lineAt(baseLine).range.start);
-    const documentEnd = document.offsetAt(document.lineAt(document.lineCount - 1).range.end);
-    const roughEnd = Math.min(documentEnd, offset + maxChars + 512);
-    const endLine = document.lineAt(document.positionAt(roughEnd).line);
-    const end = document.offsetAt(endLine.rangeIncludingLineBreak.end);
-    const fragment = document.getText(new vscode.Range(document.positionAt(base), document.positionAt(end)));
-    const result = scanMathRegions(
-      fragment,
-      this.mathScanOptions(document, snapshot.environments, baseLine),
-    );
-    const elapsed = performance.now() - started;
-    this.scans += 1;
-    this.scanSamples.push(elapsed);
-    if (this.scanSamples.length > 128) this.scanSamples.shift();
-    const local = findMathRegionAt(result.regions, offset - base);
-    if (!local) {
-      if (rememberMiss) this.lastRegionHit = undefined;
-      return undefined;
+    if (this.mathIndex?.document !== document) {
+      this.mathIndex = { document, index: new MathDocumentIndex() };
     }
-    const region: MathRegion = {
-      ...local,
-      start: local.start + base,
-      end: local.end + base,
-      contentStart: local.contentStart + base,
-      contentEnd: local.contentEnd + base,
-      ...(local.recovery ? { recovery: { ...local.recovery, boundary: local.recovery.boundary + base } } : {}),
-    };
-    this.lastRegionHit = { uri: document.uri.toString(), version: document.version, region };
+    const scans = this.mathIndex.index.scans;
+    const region = this.mathIndex.index.find(document.version, {
+      language: this.policy.previewLanguage(document) ?? 'latex',
+      customMathEnvironments: snapshot.environments,
+    }, () => document.getText(), offset);
+    if (this.mathIndex.index.scans !== scans) this.recordScan(performance.now() - started);
+    if (region) this.lastRegionHit = { uri: document.uri.toString(), version: document.version, region };
+    else if (rememberMiss) this.lastRegionHit = undefined;
     return region;
   }
 
-  private mathScanOptions(
-    document: vscode.TextDocument,
-    customMathEnvironments: readonly string[],
-    startLine: number,
-  ): MathScanOptions {
-    const documentLanguage = this.policy.previewLanguage(document) ?? 'latex';
-    const initialFence = documentLanguage === 'markdown'
-      ? this.markdownFenceStateAt(document, startLine)
-      : undefined;
-    return {
-      language: documentLanguage,
-      customMathEnvironments,
-      ...(initialFence ? { markdownInitialFence: initialFence } : {}),
-    };
-  }
-
-  private markdownFenceStateAt(
-    document: vscode.TextDocument,
-    line: number,
-  ): MarkdownFenceState | undefined {
-    const key = document.uri.toString();
-    let cache = this.markdownFenceCaches.get(key);
-    if (!cache || cache.version !== document.version) {
-      cache = { version: document.version, states: [null] };
-      this.markdownFenceCaches.set(key, cache);
-    }
-    while (cache.states.length <= line) {
-      const sourceLine = cache.states.length - 1;
-      const previous = cache.states[sourceLine] ?? undefined;
-      const next = advanceMarkdownFenceState(previous, document.lineAt(sourceLine).text);
-      cache.states.push(next ?? null);
-    }
-    return cache.states[line] ?? undefined;
-  }
-
-  private invalidateMarkdownFenceCache(event: vscode.TextDocumentChangeEvent): void {
-    if (this.policy.previewLanguage(event.document) !== 'markdown') return;
-    const key = event.document.uri.toString();
-    const cache = this.markdownFenceCaches.get(key);
-    if (!cache) return;
-    const firstChangedLine = event.contentChanges.reduce(
-      (minimum, change) => Math.min(minimum, change.range.start.line),
-      Number.POSITIVE_INFINITY,
-    );
-    if (!Number.isFinite(firstChangedLine)) {
-      this.markdownFenceCaches.delete(key);
-      return;
-    }
-    cache.states.length = Math.min(cache.states.length, firstChangedLine + 1);
-    cache.version = event.document.version;
+  private recordScan(elapsed: number): void {
+    this.scans++;
+    this.scanSamples.push(elapsed);
+    if (this.scanSamples.length > 128) this.scanSamples.shift();
   }
 
   /** 方向只看 previewPosition，默认 below。 */
@@ -1200,9 +1133,12 @@ export class PreviewController implements vscode.Disposable {
       this.lastDecorationSignature = undefined;
       return;
     }
-    const signature = `${renderKey}|${widthPx}|${heightPx}|${this.appearanceVersion}|${themeVariant}|${position.line}:${position.character}|${editor.document.version}`;
+    const selection = editor.selection;
+    const anchorState = `${selection.start.line}:${selection.start.character}-${selection.end.line}:${selection.end.character}|${editor.visibleRanges.map(range => `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`).join(',')}`;
+    const signature = `${renderKey}|${widthPx}|${heightPx}|${this.appearanceVersion}|${themeVariant}|${position.line}:${position.character}|${editor.document.version}|${anchorState}`;
     if (signature === this.lastDecorationSignature && this.activePreview?.editor === editor) return;
-    const followCaret = heightPx > metrics.lineHeightPx * 8 || widthPx > 640;
+    const followCaret = !hasAdvancedPreviewCss(css) && css.offsetX === 0 && css.offsetY === 0
+      && (heightPx > metrics.lineHeightPx * 8 || widthPx > 640);
     const geometry = this.sourceAnchors.plan(editor, region, followCaret ? { ...css, anchor: 'cursor' } : css,
       this.previewPlacement(editor, startLine, endLine, heightPx, metrics));
     this.sourceAnchors.apply(editor, geometry);
@@ -1223,7 +1159,7 @@ export class PreviewController implements vscode.Disposable {
       focusY: rendered.caretY ?? (startLine === endLine ? 0.5 : sourceProgress),
       lineHeightPx: metrics.lineHeightPx, viewportAnchor: VIEWPORT_ANCHOR, css,
       geometry: geometry.geometry, placement: geometry.placement, followCaret,
-      key: `${renderKey}|${widthPx}|${heightPx}|${this.appearanceVersion}|${themeVariant}`,
+      key: `${renderKey}|${widthPx}|${heightPx}|${this.appearanceVersion}|${themeVariant}|${anchorState}`,
     }, error => {
       if (this.lastDecorationSignature !== signature || this.activePreview?.editor !== editor) return;
       this.trace(`scroll preview failed: ${String(error)}`);

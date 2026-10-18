@@ -54,3 +54,41 @@ MathJax 预览路径中执行。未定义命令仍保留错误标记，受限宏
 
 实现对照：[MathJax 文本宏机制](https://docs.mathjax.org/en/v4.1/input/tex/extensions/textmacros.html)、
 [siunitx 官方说明](https://tug.ctan.org/macros/latex/contrib/siunitx/siunitx.pdf)。
+
+
+## 定理环境中的公式与长文档
+
+`\newtheorem{proposition}{Proposition}` 定义的是带正文和编号的定理环境，不等同于数学环境。本扩展预览其中的 `$...$`、`\[...\]` 或数学环境，不排版整个命题，也不把 `\newtheorem` 当作 MathJax 数学环境声明执行。
+
+0.3.11 修复了从任意局部窗口起点扫描时，可能把结束 `$` 当作开始 `$` 并将后面的 `\begin{proposition}` 混入公式的问题。公式索引保留完整上下文；光标移动复用索引，闭合公式内编辑局部更新，结构变化从可信边界重新扫描。Markdown 结构变化会重新扫描当前文档。LaTeX 的 `\verb`、`verbatim`、`Verbatim`、`lstlisting`、`minted` 和 `comment` 原样区域不参与数学定界符配对。
+
+如果公式本身直接包含 MathJax 不支持的环境，仍会报告错误，不会为消除报错而静默删除该环境或改变用户源码。遇到问题可以使用“诊断当前公式”在本机检查截取的区域和表达式；诊断结果可能含源码，分享前请自行脱敏。
+
+## 父目录与类文件继承（0.3.13）
+
+本地依赖支持 `\documentclass{../../note}`、`\usepackage{../样式/my macros}` 和 `\input{../defs}`；有工作区时，规范化后的目标仍须位于当前工作区内。单独打开文件时可按明确的相对路径读取父目录依赖。含目录的路径仅按准确位置解析，不按文件名猜测替代文件。
+
+类文件的 `\LoadClass` / `\LoadClassWithOptions`、样式文件的 `\RequirePackageWithOptions` 也进入依赖链；文件内定义继续按源码顺序覆盖，已打开依赖优先读取尚未保存的内容。这里只提取已有支持的声明式宏，不执行任意 TeX 程序，也不搜索系统 TeX 安装目录。
+
+
+## Markdown 数学与编号（0.3.21）
+
+除 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 及独立数学环境外，支持 GitHub 的 `$` 加单反引号包裹的行内数学，以及标记为 `math` 的反引号或波浪号代码围栏。围栏内直接写表达式，不需要再加 `$$`。MDX 和 Notebook Markdown 单元格沿用相同解析路径；普通代码围栏保持既有公式预览行为，代码里的声明不导入全局宏上下文。
+
+`\tag{1}` 保留括号编号，`\tag*{A}` 保留无括号编号；标签内容按 MathJax 文本模式解释，数学下标可写 `\tag{$A_1$}`。支持带标签的 equation、align、alignat、gather、multline（及星号形式），包括 `$$` 或 `\[...\]` 外包装。编号不再依赖网页百分比宽度；导出 PNG 使用相同完整图形。
+
+命令或环境声明的替换文本不会单独当作可执行图形；例如 `\newenvironment{foo}{\begin{tikzpicture}}{\end{tikzpicture}}` 不应在两个定义参数之间产生括号错误。显式数学区域内的宏定义仍可用于当前表达式。复杂动态 TeX、catcode 或尚未完成的声明不等价于完整 TeX 编译。
+
+预览不建立整篇文档自动编号和跨公式引用表；`\ref` / `\eqref` 在无法解析目标时可能显示 `???`。扩展使用 MathJax，并非完整 LaTeX 或 KaTeX 替代品；仅支持打包的宏包及可安全解析的本地声明。网页/Markdown 平台各有扩展语法，HTML/JSX、远程 `\require`、任意宏包及全文档排版不在这一支持范围。
+
+### English
+
+GitHub-style backtick-protected inline math and `math` fences are supported alongside the existing dollar, parenthesis, bracket, and environment delimiters. MDX and Notebook Markdown cells share this path. Explicit equation tags retain their contents and placement in SVG and PNG, including tagged equation, align, alignat, gather, and multline environments and their starred forms. Declaration replacement bodies are not independently treated as live formulas. Document-wide automatic numbering, cross-formula references, arbitrary packages, and remote loading remain outside the standalone preview scope.
+
+### 语法依据 / Syntax references
+
+- [GitHub mathematical expressions](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions)
+- [MathJax equation numbers and tags](https://docs.mathjax.org/en/v4.0/input/tex/eqnumbers.html)
+- [Jupyter Notebook mathematical notation](https://github.com/jupyter/notebook/blob/main/docs/source/notebook.md)
+- [MathJax differences from TeX](https://docs.mathjax.org/en/latest/input/tex/differences.html)
+- [KaTeX support table, for comparison](https://katex.org/docs/support_table.html)

@@ -22,13 +22,18 @@ export class PreviewSourceAnchors implements vscode.Disposable {
 
   plan(editor: vscode.TextEditor, region: MathRegion, css: PreviewCss, preferred: PreviewPlacement): SourceGeometryPlan {
     const document = editor.document;
-    const firstVisible = editor.visibleRanges[0]?.start.line ?? 0;
-    const lastVisible = editor.visibleRanges.at(-1)?.end.line ?? document.lineCount - 1;
+    const visible = editor.visibleRanges.length ? editor.visibleRanges
+      : [new vscode.Range(new vscode.Position(0, 0), new vscode.Position(document.lineCount - 1, 0))];
     const clamp = (position: vscode.Position) => {
-      const line = Math.min(lastVisible, Math.max(firstVisible, position.line));
+      // Folded lines between visible ranges have no anchor DOM. Use the nearest visible edge.
+      let line = Math.max(0, Math.min(document.lineCount - 1, position.line));
+      if (!visible.some(range => line >= range.start.line && line <= range.end.line)) {
+        line = visible.flatMap(range => [range.start.line, range.end.line])
+          .reduce((nearest, candidate) => Math.abs(candidate - position.line) < Math.abs(nearest - position.line) ? candidate : nearest);
+      }
       const length = document.lineAt(line).text.length;
       const character = position.line < line ? 0 : position.line > line ? length : position.character;
-      return new vscode.Position(line, Math.min(length, character));
+      return new vscode.Position(line, Math.max(0, Math.min(length, character)));
     };
     const sourceStart = clamp(document.positionAt(region.start));
     const sourceEnd = clamp(document.positionAt(Math.max(region.start, region.end - 1)));
@@ -39,11 +44,7 @@ export class PreviewSourceAnchors implements vscode.Disposable {
     const cursor = css.anchor === 'cursor' || (css.anchor === 'selection' && !selected);
     const start = selected ? clamp(selection.start) : cursor ? clamp(selection.active) : sourceStart;
     const end = selected ? clamp(document.positionAt(selectionEnd - 1)) : cursor ? start : sourceEnd;
-    let placement = css.placement ?? preferred;
-    // 软换行后同一源码行可能占满多个视觉行。公开 API 没有每个折行的右边界；
-    // 禁止覆盖时保守地改用下方，避免用逻辑行结尾误判整块公式的右侧。
-    const wrap = vscode.workspace.getConfiguration('editor', document.uri).get<string>('wordWrap', 'off');
-    if (placement === 'right' && css.allowOverlap !== true && (wrap !== 'off' || sourceEnd.line - sourceStart.line >= 256)) placement = 'below';
+    const placement = css.placement ?? preferred;
     const markers = new Map<string, Marker>();
     const mark = (position: vscode.Position, label: string, after = false): string => {
       const text = document.lineAt(position.line).text;
@@ -63,6 +64,7 @@ export class PreviewSourceAnchors implements vscode.Disposable {
     const rights = (from: vscode.Position, to: vscode.Position, prefix: string): string[] => {
       const result: string[] = [];
       for (let line = from.line; line <= Math.min(to.line, from.line + 255); line++) {
+        if (!visible.some(range => line >= range.start.line && line <= range.end.line)) continue;
         const last = line === to.line ? to.character : Math.max(0, document.lineAt(line).text.length - 1);
         result.push(mark(new vscode.Position(line, last), `${prefix}${line - from.line}`, true));
       }

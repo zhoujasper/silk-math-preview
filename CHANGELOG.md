@@ -1,5 +1,243 @@
 # 更新日志 / Changelog
 
+## 0.3.22 - 2026-10-18
+
+### 中文
+
+- 本次 GitHub 发布包含 0.3.6–0.3.22 的累计更新，包括 issue #7 的环境声明括号误报及 TeX/Markdown 中 `\tag` 编号预览修复；完整变更见下方各版本记录。
+- 修复含多张 TikZ 图的数学表达式只显示第一张图的问题。美元符、圆括号/方括号数学定界符及 Markdown math 围栏内，周围的文字、运算符、伸缩括号和后续图形由 TeX 整体排版；单独图形保持原渲染路径。
+- 修复 TikZ 复制 PNG 在等比例缩放时描边未同步缩放造成的细边缺失，保留白底、白色节点及既有导出尺寸限制。
+- 用用户提供的完整文档检查六条图形公式，并回归既有宏声明、编号公式、扫描索引、矩阵、焦点及 TikZ 场景。内置字体与文档使用的 XeLaTeX 字体仍可能不同。
+
+### English
+
+- This GitHub release includes cumulative updates from 0.3.6 through 0.3.22, including fixes for issue #7: false brace diagnostics in environment declarations and tagged equation previews in TeX/Markdown. See the version entries below for the full change history.
+- Preserve complete math expressions containing multiple TikZ pictures instead of extracting only the first picture. Dollar, parenthesis/bracket math delimiters and Markdown math fences retain surrounding text, operators, stretchy delimiters and subsequent pictures through native TeX layout. Standalone pictures retain their existing rendering path.
+- Scale TikZ PNG stroke widths with uniform image transforms to prevent missing thin edges, preserving white backgrounds, white nodes and existing export limits.
+- Check six graphical expressions from the supplied document and regress macro declarations, tagged equations, scanning/indexing, matrices, focus handling and TikZ cases. Bundled fonts can still differ from the document's XeLaTeX fonts.
+
+## 0.3.21 - 2026-10-12
+
+### 中文
+
+- 修复把 `\newenvironment`、xparse 环境及命令声明中的替换文本误当成实际公式或 TikZ 图形，导致合法 `}{` 报括号错误的问题。声明内结构编辑保留完整解析上下文，注释和原样代码不冒充声明。
+- 修复 `\tag` / `\tag*` 编号公式的百分比 SVG 尺寸及标签定位；保留编号、星号样式和多行基线。带编号的 align / alignat / gather / multline 预览不再误转成禁止编号的内部环境，每帧重置编号状态，避免重复渲染污染。
+- 补充 Markdown 的 math 代码围栏和 GitHub 特殊行内数学包装；修复显示定界符内完整 equation / align 等环境被拆断的问题。Markdown、MDX、Notebook 共用数学识别和渲染路径。
+- 修复星号命令、声明体、数组列格式及横线附近的光标注入；错误恢复忽略注释里的括号和命令，保留原注释的文本语义。扩展检查涵盖常见 AMS、文本、颜色、化学、单位、bra/ket 和 Markdown 数学写法。
+- 预览仍是独立公式图片，不建立整篇文档的自动编号或跨公式引用表，不执行任意 LaTeX 宏包或远程加载命令。未运行浏览器或 Extension Host 视觉验收。
+
+### English
+
+- Stop interpreting replacement bodies in environment, xparse, and command declarations as live math or TikZ pictures, avoiding false brace diagnostics on valid `}{` boundaries. Preserve declaration context during structural edits and exclude comments and verbatim examples.
+- Fix percentage SVG sizing and label positioning for `\tag` / `\tag*`, retaining tags, starred formatting, and row baselines. Tagged align / alignat / gather / multline previews retain numbering support and reset numbering state between frames.
+- Add Markdown math fences and GitHub's backtick-protected inline math syntax. Keep complete equation / align environments inside display delimiters together. Markdown, MDX, and Notebook cells share the math scanning and rendering path.
+- Protect starred commands, declaration bodies, array column specifications, and table rules from caret injection. Ignore commented braces and commands during incomplete-expression recovery while preserving comment semantics. Broader checks cover common AMS, text, color, chemistry, unit, bra/ket, and Markdown math syntax.
+- Previews remain standalone formula images: document-wide automatic numbering, cross-formula reference resolution, arbitrary LaTeX packages, and remote package loading are not implemented. Browser and Extension Host visual acceptance were not run.
+
+## 0.3.20 - 2026-10-12
+
+### 中文
+
+- 修复复制 TikZ 图片为 PNG 时白色背景被转成黑色、整张图变黑块的问题。导出保留白色背景及节点的白色遮挡区域，其他彩色墨迹继续转黑；保持完整图片、白边及原有尺寸限制。
+- 修复 TikZ / tikzcd 自定义节点和嵌套图形继承文字层的无描边状态，导致 bra/ket 三角形或算子矩形轮廓消失的问题。图形开始时恢复 PGF 描边色和图形模式，保留原生形状、连线和标签位置。
+- 使用实际 QPC 源码的六张图及已编译 PDF 对照验证；内置 BaKoMa 字体与 XeLaTeX 的 Latin Modern 数学字体仍可能存在字形和少量尺寸差异，不宣称逐像素一致。
+
+### English
+
+- Fix copied TikZ PNGs becoming black rectangles because their white SVG background was converted to black. Preserve white backgrounds and white node masks while converting other colored ink to black; retain the full image, white margin, and existing size limits.
+- Fix custom TikZ / tikzcd nodes and nested pictures inheriting text-layer stroke suppression, hiding bra/ket triangles or operator rectangle outlines. Restore PGF stroke color and picture mode at picture start while retaining native shapes, wires, and label positions.
+- Check the six diagrams in the actual QPC source against its compiled PDF. The bundled BaKoMa fonts can still differ slightly in glyphs and dimensions from XeLaTeX's Latin Modern math font; pixel-identical output is not claimed.
+
+## 0.3.19 - 2026-10-12
+
+### 中文
+
+- 修复自动预览排队及等待关闭旧浮层期间进入查找框的竞态；实际执行宿主命令前再次检查编辑区交互状态，避免迟到的预览抢焦点。
+- 优化 Markdown 行内代码配对和公式包裹匹配，避免每条公式遍历全部代码区间；等长公式编辑仅更新当前索引项，并二分定位忽略区间，保留完整上下文与错误恢复规则。
+- 修正预览缓存的内存预算：计入实际保留的图片 URI 和缓存键，包括 TikZ 上下文，避免只统计原 SVG 而低估占用。
+
+### English
+
+- Fix automatic-preview races when Find gains focus while a hover command is queued or an earlier hover is closing. Recheck editor interaction state before executing host commands so a delayed preview does not steal focus.
+- Optimize Markdown inline-code pairing and formula-wrapper lookup without scanning every code span for each formula. Equal-length formula edits update only the affected index entry, with binary lookup of ignored ranges, preserving full context and recovery rules.
+- Account for retained image URIs and cache keys, including TikZ context, in the preview cache budget instead of undercounting memory using only the original SVG.
+
+## 0.3.18 - 2026-10-12
+
+### 中文
+
+- 改善前文漏写数学定界符或环境未闭合时的恢复：遇到列表项、章节及文档/列表环境边界后重新识别，避免把后续正常公式和正文结束命令拼成同一条预览。
+- 未闭合区域在后续公式起点恢复；固定定界符遇到新的显式数学起点时停止误配，完整嵌套环境仍保护其内部标签和换行。不修改源码，不隐藏当前公式自身的错误；没有明确结构边界的歧义输入仍可能需要补齐定界符。
+
+### English
+
+- Improve recovery from missing math delimiters and unclosed environments: restart recognition at list items, section commands, and document/list environment boundaries instead of merging later valid formulas and closing prose commands into one preview.
+- Recover unclosed regions at subsequent formula openers. Stop fixed-delimiter matching at new explicit math starts while preserving labels and line breaks inside complete nested environments. Source remains unchanged and errors in the current formula remain visible; ambiguous input without clear structural boundaries may still need its delimiters repaired.
+
+## 0.3.17 - 2026-10-12
+
+### 中文
+
+- 修复包在 `$…$`、`$$…$$`、`\(…\)` 或 `\[…\]` 内的 TikZ / tikzcd 图形被节点里的数学标签提前截断，导致自定义 bra/ket 节点等图形无法完整预览。图形内的定界符、注释和空行不再结束外层公式。
+- 保留 `\tikzcdset` 的间距、标签字体和自定义样式设置；即使当前预览的是普通 TikZ 图，也会按需加载这些设置所需的 tikz-cd 宏包。保留原生宏展开和定义顺序，不修改用户源码。
+
+- 修复在文件末尾未闭合的原样文本环境中继续输入时，忽略区间缓存未随追加内容更新的问题。
+
+### English
+
+- Fix TikZ / tikzcd diagrams wrapped in `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` being truncated by math labels inside nodes, preventing complete previews of diagrams such as custom bra/ket nodes. Delimiters, comments, and blank lines inside a diagram no longer terminate the surrounding formula.
+- Preserve `\tikzcdset` spacing, label fonts, and custom styles. Load tikz-cd when these settings need it, including when previewing an ordinary TikZ picture. Retain native macro expansion and definition order without modifying user source.
+
+- Fix ignored-range caches not extending when appending to an unclosed verbatim environment at the end of a file.
+
+## 0.3.16 - 2026-10-08
+
+### 中文
+
+- 修复用 Ctrl+F 查找时，匹配项落在公式或表格中会让预览抢走查找框焦点，导致只能输入一个字、后续按键写入正文的问题。查找、替换等程序化选区移动时，预览不再调用显示/关闭浮层或焦点命令，只原地更新或隐藏，回到编辑区操作后恢复正常。
+- 自动焦点恢复仅在无障碍模式可能开启、且刚刚发生编辑区内键盘/鼠标操作时执行；`editor.accessibilitySupport` 为 `off` 时永不执行。
+- 修复 Windows 截屏识别显示“无法框选屏幕”（unavailable）：针对 Windows PowerShell 5.1，脚本改为纯 ASCII，脚本正文与路径经环境变量传入并以脚本块运行，不再使用 `-File`（受代码页如 GBK 和组策略执行策略影响）或常被安全软件拦截的 `-EncodedCommand`；优先使用系统目录中的 Windows PowerShell；框选层在隐藏启动时也会强制显示并取得焦点；错误（含 CLIXML 输出）显示为可读文本。图片复制为 PNG 同样采用新的启动方式。
+
+### English
+
+- Fix the preview stealing focus from the Find widget when a Ctrl+F match lands inside a formula or table, which limited the query to one character and sent later keystrokes into the document. For selections moved programmatically by Find/Replace, the preview no longer runs hover show/hide or focus commands; it only updates or hides in place and returns to normal after the next keyboard or mouse action in the editor.
+- Automatic focus restoration now runs only when accessibility mode may be active and a keyboard or mouse action happened in the editor just before; it never runs when `editor.accessibilitySupport` is `off`.
+- Fix Windows screen capture OCR reporting that screen selection is unavailable. For Windows PowerShell 5.1, the script is ASCII-only, its text and paths are passed through environment variables and run as a script block, avoiding `-File` (affected by code pages such as GBK and Group Policy execution policies) and `-EncodedCommand` (often blocked by security software). Windows PowerShell is started from the system directory first, the selection overlay is forced visible and focused even when launched hidden, and errors (including CLIXML output) are shown as readable text. Copying previews as PNG uses the same launcher.
+
+## 0.3.15 - 2026-10-07
+
+### 中文
+
+- 修复自定义类文件中的 `\DeclareMathOperator` 导致 TikZ / tikzcd 报“只能在导言区使用”：保留原文的正文边界，先执行导言声明，再开始图形正文，保持局部分组与定义检查点。
+- 隔离未加载排版宏包的无关重定义；已有命令保持正常重定义，图形真正使用未支持命令时仍报告错误。补齐 TikZ 本地类继承和带选项宏包依赖。
+- 统一完整文档、独立图形及带前置声明的渲染路径；数学算子自动加载 amsmath，保留原生条件加载和宏定义顺序。
+
+### English
+
+- Fix TikZ / tikzcd failures from custom class `\DeclareMathOperator` declarations being executed after the document begins. Preserve the original document boundary, local groups, and definition checkpoints.
+- Guard unrelated redefinitions from omitted layout packages while retaining existing command redefinitions and errors for unsupported commands actually used by a picture. Follow local class inheritance and package-with-options dependencies in TikZ contexts.
+- Align complete-document, standalone-picture, and prefixed-declaration rendering. Automatically load amsmath for math operators while retaining native conditional loading and definition order.
+
+## 0.3.14 - 2026-10-07
+
+### 中文
+
+- 修复 TikZ / tikzcd 预览将前文的 `\iff` 等普通命令误判为未闭合 TeX 条件，导致交换图无法显示的问题。
+- 正确识别原生条件、`\newif` 布尔声明及其赋值，跳过 `\ifdefined` / `\ifx` 的命令操作数，保留真正未闭合条件的错误提示。
+
+### English
+
+- Fix TikZ / tikzcd previews incorrectly treating preceding ordinary commands such as `\iff` as unclosed TeX conditionals, preventing commutative diagrams from rendering.
+- Recognize native conditionals, `\newif` boolean declarations and assignments, and skip command operands of `\ifdefined` / `\ifx`, while still reporting genuinely unclosed conditions.
+
+## 0.3.13 - 2026-10-06
+
+### 中文
+
+- 修复通过 `../../note` 等父目录相对路径引用 `.cls/.sty/.tex` 时自定义宏未加载的问题；支持中文及空格路径，保留工作区边界及依赖读取上限。
+- 支持 `\LoadClass`、`\LoadClassWithOptions` 和 `\RequirePackageWithOptions` 的本地依赖链，并在修改这些声明时刷新宏定义。
+
+### English
+
+- Load custom macros from parent-relative `.cls/.sty/.tex` references such as `../../note`, including Unicode and space-containing paths, while retaining workspace boundaries and dependency limits.
+- Follow local `\LoadClass`, `\LoadClassWithOptions`, and `\RequirePackageWithOptions` dependencies and refresh definitions when these declarations change.
+
+## 0.3.12 - 2026-10-02
+
+### 中文
+
+- 修复 Markdown 未闭合公式恢复后错误复用闭合符缓存的问题；段落恢复跳过代码区间，避免后续正常公式被遗漏。
+- 修复多光标同时编辑时宏定义检测的位置偏移，保留编辑前边界判断并按编辑后位置读取上下文。
+
+### English
+
+- Fix incorrect reuse of missing-delimiter caches after recovering from unfinished Markdown math. Paragraph recovery skips code ranges so later valid formulas remain discoverable.
+- Fix definition detection after simultaneous multi-cursor edits by reading context at post-edit positions while retaining pre-edit offsets for cache boundaries.
+
+## 0.3.11 - 2026-10-02
+
+### 中文
+
+- 修复长文档中公式偶发丢失或误报 `Unknown environment`：使用保留完整定界符上下文的公式索引，光标移动复用结果，公式内编辑局部更新，结构编辑从可信边界重新扫描；环境定义变化同时更新索引。
+- 修复 Markdown 代码区间排序与跨围栏反引号匹配、行内公式的段落恢复及注释后的空行判断；LaTeX 的 verbatim 类内容不再干扰外围公式配对。
+- 消除大量未闭合环境或显示公式的重复尾部扫描；长文档补全按预计内存预算复用扫描，注释区间使用二分查找。
+- 修复失败定义快照被持续缓存的问题，并使用编辑前的准确 offset 判断定义与 TikZ 上下文失效，避免多处编辑后错误复用。
+- 完善渲染 Worker 启动、消息发送失败、超时、退出和释放后的清理；捕获异步预览与诊断错误，保留现有过期结果保护及同公式失败时的上一帧。
+
+### English
+
+- Fix intermittent missing previews and spurious `Unknown environment` errors in long documents. Keep full delimiter context in a formula index, reuse it on caret movement, update edited formulas locally, and rescan structural changes from verified boundaries. Environment-definition changes also refresh the index.
+- Fix Markdown code-range ordering and backtick matching across fences, inline-math paragraph recovery, and blank lines after comments. Literal LaTeX environments no longer disturb surrounding formula pairing.
+- Eliminate repeated tail scans for large numbers of unfinished environments or display formulas. Reuse long-document completion scans within an estimated memory budget and search ignored ranges with binary lookup.
+- Evict failed definition snapshots so later requests can retry, and use exact pre-edit offsets when invalidating definitions and TikZ context after multi-edit transactions.
+- Harden rendering Worker startup, message-send failures, timeouts, exits, and disposal. Catch asynchronous preview and diagnostic failures while preserving stale-result protection and the last successful frame during same-formula edits.
+
+## 0.3.10
+
+### 中文
+
+- 支持独立矩阵和 cases 环境预览，无需额外包裹美元符号。
+- 缩小复制按钮及其占位，减少短公式预览的最小高度。
+- 自动预览出现后恢复编辑焦点，兼容原生无障碍悬浮框的自动聚焦。
+
+### English
+
+- Preview standalone matrix and cases environments without additional dollar delimiters.
+- Reduce the copy button, its reserved space, and the minimum height of short previews.
+- Restore editing focus after automatic previews, including native accessible hover autofocus.
+
+## 0.3.9 - 2026-09-24
+
+### 中文
+
+- 修复 0.3.8 中公式已渲染却完全不显示的问题：上下浮层的近侧边界使用了相反的编辑器视口边缘，导致可用高度被压至零并触发隐藏。改用与 top/bottom 定位属性对应的视口边缘，保留固定方向、防覆盖、滚动和空间不足隐藏行为。
+
+### English
+
+- Fix previews rendering but remaining invisible in 0.3.8. Above/below positioning constrained the near inset against the opposite viewport edge, collapsing available height and triggering the no-space hiding rule. Use the viewport edge corresponding to the top/bottom inset while preserving fixed placement, source protection, scrolling, and hiding when space is genuinely unavailable.
+
+## 0.3.8 - 2026-09-23
+
+### 中文
+
+- 统一所有尺寸的自定义基准、间隔和偏移，修复高级定位默认防覆盖失效、负偏移和右侧纵向偏移被忽略的问题；修复折叠源码锚点、自定义圆角/阴影裁切及透明度校验，统一限制手写设置中的缩放值。
+- 选区边界、可见范围与折叠变化纳入定位刷新；所选方向没有足够可用空间时隐藏公式和复制按钮，不自动换边。保留公式字号及双向滚动。
+
+### English
+
+- Honor custom anchors, gaps, and offsets at every preview size. Fix default source protection for advanced positioning, ignored negative/vertical right-side offsets, anchors on folded source, clipped custom corners/shadows, opacity validation, and inconsistent bounds for manually edited zoom settings.
+- Refresh positioning when selection boundaries, visible ranges, or folds change. Hide the formula and copy control when the selected side has no usable space, without flipping sides. Preserve math size and bidirectional scrolling.
+
+## 0.3.7 - 2026-09-23
+
+### 中文
+
+
+
+- 修复行列式竖线及同类拉伸定界符与矩阵内容错位：SVG 展平时将裁剪窗口与内部缩放/平移分离，保持外部变换顺序；边界计算忽略裁剪区域内不可见的定位点，避免多余留白。覆盖单双竖线、括号、嵌套矩阵、根式及 PNG 导出。
+
+- 修复长宽公式覆盖所选方向的问题。上方、下方和右侧定位均严格保持，默认下方；移除空间不足自动翻转及软换行时右侧退回下方的规则。空间不足时限制同侧滚动窗口，不缩小公式字号；所选侧完全无空间时需滚动编辑器或调整间隔。
+
+### English
+
+
+
+- Fix determinant bars and other stretched delimiters misaligned with matrix contents. Keep the SVG clipping viewport separate from its internal scale/translation, preserve outer transform order, and exclude invisible clipped origins from bounds expansion to avoid excess whitespace. Covers single/double bars, brackets, nested matrices, radicals, and PNG export.
+
+- Fix oversized previews overriding the selected side. Keep above, below, and right placement strict, with below as the default; remove automatic flipping and the right-to-below fallback for wrapped source. Constrain the scroll viewport on the selected side without shrinking math; if no space remains on that side, scroll the editor or adjust the gap.
+
+## 0.3.6 - 2026-09-12
+
+### 中文
+
+- 预览右侧为复制按钮预留 36px 独立空间，滚动区域止于按钮区域之前，矩阵末列和横向滚动中的公式不再被图标遮挡。空间足够时相应增加浮层宽度，保持公式字号；短公式也为按钮保留足够高度。
+- 默认预览明确优先放在当前源码光标下方，不再沿用原生悬浮框优先向上的方向；只有下方空间不足才向上避让。长宽公式采用同样的顺序，保留细滚动条、编辑位置保护及连续输入防闪烁；短公式显式设置的高级定位继续生效。
+
+### English
+
+- Reserve a separate 36px area on the right for the copy button, with the scroll viewport ending before it so the icon cannot obscure the last matrix column or horizontally scrolling math. Expand the floating window when space permits without changing the formula font size, and retain enough height for the button in short previews.
+- Prefer the space below the current source caret by default instead of inheriting the native hover's upward preference, falling back above only when there is insufficient space below. Apply the same order to oversized formulas while preserving thin scrollbars, editing-position protection, and stable updates during typing. Explicit advanced placement for short formulas remains available.
+
 ## 0.3.5 - 2026-09-12
 
 ### 中文

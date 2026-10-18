@@ -14,7 +14,7 @@ export interface DependencySource {
 export interface ParsedDependency {
   readonly kind: DependencyKind;
   readonly name: string;
-  readonly command: 'documentclass' | 'usepackage' | 'RequirePackage' | 'input' | 'include';
+  readonly command: 'documentclass' | 'LoadClass' | 'LoadClassWithOptions' | 'RequirePackageWithOptions' | 'usepackage' | 'RequirePackage' | 'input' | 'include';
   readonly options: readonly string[];
   readonly resolution: DependencyResolution;
   readonly limitations: readonly string[];
@@ -28,6 +28,9 @@ interface ControlSequence {
 
 const SUPPORTED_COMMANDS = new Set([
   'documentclass',
+  'LoadClass',
+  'LoadClassWithOptions',
+  'RequirePackageWithOptions',
   'usepackage',
   'RequirePackage',
   'input',
@@ -80,7 +83,7 @@ function parseDependencyAt(
   let rawNames: readonly string[];
   let end: number;
   if (argument) {
-    rawNames = control.name === 'usepackage' || control.name === 'RequirePackage'
+    rawNames = control.name === 'usepackage' || (control.name === 'RequirePackage' || control.name === 'RequirePackageWithOptions')
       ? splitTopLevel(argument.content, ',')
       : [argument.content];
     end = argument.end;
@@ -119,10 +122,10 @@ function parseDependencyAt(
 }
 
 function dependencyKind(command: string): DependencyKind {
-  if (command === 'documentclass') {
+  if (command === 'documentclass' || command === 'LoadClass' || command === 'LoadClassWithOptions') {
     return 'documentclass';
   }
-  if (command === 'usepackage' || command === 'RequirePackage') {
+  if (command === 'usepackage' || command === 'RequirePackage' || command === 'RequirePackageWithOptions') {
     return 'package';
   }
   return command === 'include' ? 'include' : 'input';

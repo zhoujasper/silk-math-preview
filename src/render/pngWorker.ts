@@ -18,8 +18,15 @@ async function renderPng(): Promise<void> {
   const xml = new DOMParser({ onError: () => { throw new Error('invalid-preview-image'); } }).parseFromString(svg, 'image/svg+xml');
   const root = xml.documentElement;
   if (root?.localName !== 'svg') throw new Error('invalid-preview-image');
-  const blackStyle = (style: string) => style.replace(/((?:^|[;{])\s*(?:fill|stroke|color|stop-color|background-color)\s*:)\s*([^;}]+)/gi,
-    (_all, property: string, value: string) => `${property}${/^(?:none|transparent)\b/i.test(value.trim()) ? value : /background-color/i.test(property) ? '#fff' : '#000'}`);
+  const preserveWhite = root.getAttribute('data-silk-tikz') === 'true';
+  // 白色背景与节点遮挡必须保持白色，否则会盖住整张图或节点文字。
+  const monochrome = (value: string, background = false): string => {
+    const color = value.replace(/\s*!important\s*$/i, '').trim().toLowerCase().replace(/\s+/g, '');
+    if (/^(?:none|transparent)$/.test(color)) return value;
+    return background || (preserveWhite && /^(?:white|#(?:fff|ffff|ffffff|ffffffff)|rgb\(255,255,255\)|rgba\(255,255,255,1\))$/.test(color)) ? '#fff' : '#000';
+  };
+  const blackStyle = (style: string, background = false) => style.replace(/((?:^|[;{])\s*(fill|stroke|color|stop-color|background-color)\s*:)\s*([^;}]+)/gi,
+    (_all, property: string, name: string, value: string) => `${property}${monochrome(value, name.toLowerCase() === 'background-color' || (background && name.toLowerCase() === 'fill'))}`);
   for (const node of [root, ...Array.from(root.getElementsByTagName('*'))]) {
     if ((node.getAttribute('class') ?? '').split(/\s+/).includes('silk-math-caret')
       || ['script', 'foreignObject', 'image'].includes(node.localName ?? '')
@@ -28,9 +35,9 @@ async function renderPng(): Promise<void> {
     }
     for (const name of ['fill', 'stroke', 'color', 'stop-color']) {
       const value = node.getAttribute(name);
-      if (value && !/^(?:none|transparent)$/i.test(value)) node.setAttribute(name, node.hasAttribute('data-bgcolor') && name === 'fill' ? '#fff' : '#000');
+      if (value) node.setAttribute(name, monochrome(value, node.hasAttribute('data-bgcolor') && name === 'fill'));
     }
-    if (node.hasAttribute('style')) node.setAttribute('style', blackStyle(node.getAttribute('style')!));
+    if (node.hasAttribute('style')) node.setAttribute('style', blackStyle(node.getAttribute('style')!, node.hasAttribute('data-bgcolor')));
     if (node.localName === 'style') node.textContent = blackStyle(node.textContent ?? '');
   }
   root.setAttribute('width', String(width - 8));
@@ -44,7 +51,19 @@ async function renderPng(): Promise<void> {
   context.fillRect(0, 0, width, height);
   // Canvg 用极小值表达 SVG 的零描边；PureImage 不应把它投影成有宽度的线。
   const stroke = context.stroke.bind(context);
-  context.stroke = () => { if (context.lineWidth > 0.000001) stroke(); };
+  context.stroke = () => {
+    if (context.lineWidth <= 0.000001) return;
+    // PureImage transforms path coordinates but leaves stroke widths in local
+    // units. Apply uniform SVG scaling (including reflections) for TikZ strokes.
+    const width = context.lineWidth;
+    if (preserveWhite) {
+      const { a, b, c, d } = context.getTransform();
+      const x = Math.hypot(a, b), y = Math.hypot(c, d);
+      if (Math.abs(x - y) < 1e-6 && Math.abs(a * c + b * d) < 1e-6) context.lineWidth = width * x;
+    }
+    try { stroke(); }
+    finally { context.lineWidth = width; }
+  };
   const renderer = Canvg.fromString(context as unknown as CanvasRenderingContext2D, new XMLSerializer().serializeToString(root), {
     DOMParser: DOMParser as unknown as typeof globalThis.DOMParser,
     ignoreAnimation: true, ignoreMouse: true, ignoreDimensions: true, ignoreClear: true,

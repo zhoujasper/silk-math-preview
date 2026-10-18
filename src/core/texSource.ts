@@ -16,7 +16,7 @@ export type DefinitionRefreshUrgency = 'idle' | 'soon' | 'now';
  * 插入文本或光标附近出现这些声明时，定义快照必须马上重算。
  * `\def` 放在 `\definecolor` 之后，避免把颜色声明误切成 `\def`。
  */
-const DEFINITION_EDIT_RE = /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareMathOperator|DeclareMathAlphabet|definecolor|providecolor|colorlet|usepackage|RequirePackage|documentclass|input|include|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand|NewDocumentEnvironment|RenewDocumentEnvironment|ProvideDocumentEnvironment|DeclareDocumentEnvironment|DeclareRobustCommand|DeclareSIUnit|DeclarePairedDelimiter|sisetup|gdef|def)\b/;
+const DEFINITION_EDIT_RE = /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareMathOperator|DeclareMathAlphabet|definecolor|providecolor|colorlet|usepackage|RequirePackage(?:WithOptions)?|LoadClass(?:WithOptions)?|documentclass|input|include|NewDocumentCommand|RenewDocumentCommand|ProvideDocumentCommand|DeclareDocumentCommand|NewDocumentEnvironment|RenewDocumentEnvironment|ProvideDocumentEnvironment|DeclareDocumentEnvironment|DeclareRobustCommand|DeclareSIUnit|DeclarePairedDelimiter|sisetup|gdef|def)\b/;
 
 export function parseTeXSource(text: string, sourceId = '<memory>'): ParsedTexSource {
   const masked = maskTeXComments(text);
