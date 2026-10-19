@@ -2,7 +2,9 @@ import { anchorCaret } from './caretAnchor';
 import { maskTeXComments } from './definitionParser';
 import { mathRegionContent } from './mathScanner';
 import { buildMarkdownTableExpression, markdownTableCellStart } from './markdownTable';
-import { buildTableExpression, isTableEnvironment, isTablePreviewRegion, tablePreambleLength } from './tablePreview';
+import {
+  buildTableExpression, isTableEnvironment, isTablePreviewRegion, resolveTableEmbeds, tablePreambleLength, type TableEmbed,
+} from './tablePreview';
 import type { CaretAnchor, MathRegion } from './types';
 
 /**
@@ -15,6 +17,12 @@ export const PREVIEW_CARET_TEX = String.raw`\class{silk-math-caret}{\rule[-0.18e
 export interface PreviewExpression {
   readonly expression: string;
   readonly caret: CaretAnchor;
+  /**
+   * 表格单元格里的图形。`expression` 已用文字占位，可直接渲染；调用方渲染出图形后
+   * 用 `embedExpression` + resolveTableEmbeds 换成真实尺寸的占位框。
+   */
+  readonly embeds?: readonly TableEmbed[];
+  readonly embedExpression?: string;
 }
 
 const INNER_PREVIEW_ENVIRONMENTS: Readonly<Record<string, string | undefined>> = Object.freeze({
@@ -205,14 +213,21 @@ function latexTableCellStart(content: string, offset: number): number {
   const clamped = Math.min(Math.max(0, offset), content.length);
   let start = 0;
   let depth = 0;
+  // 单元格里的矩阵、cases、内层表格有自己的 `&`/`\\\\`，不是外层单元格边界。
+  let environmentDepth = 0;
   for (let cursor = 0; cursor < clamped; cursor += 1) {
     if (isEscaped(content, cursor)) continue;
     const character = content[cursor];
+    if (character === '\\' && !content.startsWith('\\\\', cursor)) {
+      if (/^\\begin(?![A-Za-z@])/.test(content.slice(cursor, cursor + 7))) environmentDepth += 1;
+      else if (/^\\end(?![A-Za-z@])/.test(content.slice(cursor, cursor + 5))) environmentDepth = Math.max(0, environmentDepth - 1);
+      continue;
+    }
     if (character === '{') depth += 1;
     else if (character === '}') depth = Math.max(0, depth - 1);
-    else if (depth === 0 && character === '&') start = cursor + 1;
+    else if (depth === 0 && environmentDepth === 0 && character === '&') start = cursor + 1;
     else if (depth === 0 && content.startsWith('\\\\', cursor)) {
-      start = cursor + 2;
+      if (environmentDepth === 0) start = cursor + 2;
       cursor += 1;
     }
   }
@@ -277,7 +292,10 @@ export function buildPreviewExpression(
     return { expression: buildMarkdownTableExpression(marked), caret };
   }
   if (table) {
-    return { expression: buildTableExpression(marked, marker), caret };
+    const embeds: TableEmbed[] = [];
+    const embedExpression = buildTableExpression(marked, marker, embeds);
+    if (embeds.length === 0) return { expression: embedExpression, caret };
+    return { expression: resolveTableEmbeds(embedExpression, embeds), caret, embeds, embedExpression };
   }
   return {
     expression: region.environment

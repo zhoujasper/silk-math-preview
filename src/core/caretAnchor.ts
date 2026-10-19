@@ -324,6 +324,52 @@ function protectedArgumentSeam(
   return undefined;
 }
 
+/**
+ * 用户宏常带星号或尺寸参数，例如 mathtools 的 `\braket*{a}{b}`、`\braket[\big]{a}{b}`。
+ * 预览不知道宏的参数表；只要控制词后面是 `*`/短 `[...]` 再接 `{`，这些修饰符前后
+ * 以及随后各参数组之间都不能放 marker，否则 marker 会被当成参数，显示内容随光标改变。
+ */
+function modifiedCommandSeam(
+  text: string,
+  offset: number,
+): { readonly offset: number; readonly start: number; readonly end: number } | undefined {
+  for (let cursor = 0; cursor < text.length;) {
+    const command = readControlSequence(text, cursor);
+    if (!command) {
+      cursor += 1;
+      continue;
+    }
+    cursor = command.end;
+    if (command.start > offset) break;
+    if (!/^[A-Za-z@]+$/.test(command.name) || DELIMITER_COMMANDS.has(command.name)
+      || /^(?:begin|end|left|right|middle|sqrt)$/.test(command.name)) continue;
+    let scan = skipWhitespace(text, command.end);
+    let modified = false;
+    if (text[scan] === '*') {
+      scan = skipWhitespace(text, scan + 1);
+      modified = true;
+    }
+    for (let guard = 0; guard < 2 && text[scan] === '['; guard += 1) {
+      const end = groupEnd(text, scan, '[', ']');
+      if (end === undefined || end - scan > 64) break;
+      scan = skipWhitespace(text, end);
+      modified = true;
+    }
+    if (!modified || text[scan] !== '{') continue;
+    if (offset >= command.end && offset <= scan) return { offset: scan + 1, start: command.start, end: scan + 1 };
+    let group = scan;
+    for (let guard = 0; guard < 9; guard += 1) {
+      const end = groupEnd(text, group);
+      if (end === undefined) break;
+      const next = skipWhitespace(text, end);
+      if (text[next] !== '{') break;
+      if (offset >= end && offset <= next) return { offset: next + 1, start: command.start, end: next + 1 };
+      group = next;
+    }
+  }
+  return undefined;
+}
+
 function safeArgumentSeam(text: string, requestedOffset: number): CaretAnchor | undefined {
   const script = scriptArgumentSeam(text, requestedOffset);
   if (script) {
@@ -349,6 +395,17 @@ function safeArgumentSeam(text: string, requestedOffset: number): CaretAnchor | 
       exact: false,
       reason: 'command-argument-seam',
       unsafeRange: { start: protectedArgument.start, end: protectedArgument.end },
+    };
+  }
+
+  const modified = modifiedCommandSeam(text, requestedOffset);
+  if (modified) {
+    return {
+      requestedOffset,
+      offset: modified.offset,
+      exact: false,
+      reason: 'command-argument-seam',
+      unsafeRange: { start: modified.start, end: modified.end },
     };
   }
 

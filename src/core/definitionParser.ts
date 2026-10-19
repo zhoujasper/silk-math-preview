@@ -53,6 +53,8 @@ export interface ParsedDefinition {
   readonly replacement?: string;
   readonly beginReplacement?: string;
   readonly endReplacement?: string;
+  /** 需要原样交给 MathJax 的声明（如 mathtools 的 X/XPP 定界符，含 \delimsize）。 */
+  readonly nativeDeclaration?: string;
 }
 
 export interface TeXGroup {
@@ -194,7 +196,7 @@ export function skipTeXWhitespace(text: string, offset: number): number {
 
 /** 便宜的声明入口检查；普通公式扫描和局部编辑不构建完整定义表。 */
 export function hasDefinitionDeclarations(text: string): boolean {
-  return /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareRobustCommand|(?:New|Renew|Provide|Declare)Document(?:Command|Environment)|DeclareMath(?:Operator|Alphabet)|DeclareSymbolFontAlphabet|DeclarePairedDelimiter|DeclareSIUnit|definecolor|providecolor|colorlet|sisetup|gdef|def)\b/.test(text);
+  return /\\(?:(?:re)?new(?:command|environment)|providecommand|DeclareRobustCommand|(?:New|Renew|Provide|Declare)Document(?:Command|Environment)|DeclareMath(?:Operator|Alphabet)|DeclareSymbolFontAlphabet|DeclarePairedDelimiter(?:X|XPP)?|DeclareSIUnit|definecolor|providecolor|colorlet|sisetup|gdef|def)\b/.test(text);
 }
 
 /** 解析常见声明式命令和环境；不会执行条件、catcode、expl3 或 LuaTeX。 */
@@ -232,6 +234,8 @@ export function parseDefinitions(
       parsed = parseColorDefinition(masked, sourceId, lineStarts, offset, control.end, control.name);
     } else if (control.name === 'DeclarePairedDelimiter') {
       parsed = parsePairedDelimiter(masked, sourceId, lineStarts, offset, control.end);
+    } else if (control.name === 'DeclarePairedDelimiterX' || control.name === 'DeclarePairedDelimiterXPP') {
+      parsed = parsePairedDelimiterX(masked, sourceId, lineStarts, offset, control.end, control.name === 'DeclarePairedDelimiterXPP');
     } else if (control.name === 'sisetup' || control.name === 'DeclareSIUnit') {
       parsed = parseSiDeclaration(masked, sourceId, lineStarts, offset, control.end, control.name);
     } else if (control.name === 'def' || control.name === 'gdef') {
@@ -275,6 +279,48 @@ function parsePairedDelimiter(
     beginReplacement: left.content, endReplacement: right.content,
   });
   return { definition, end: right.end };
+}
+
+/**
+ * mathtools 的 X/XPP 形式：{\cmd}[n]{左}{右}{主体}，XPP 另有前后代码。主体中的 \delimsize
+ * 依赖 MathJax 原生实现，因此保存规范化后的原声明，避免退化为同名宏包命令。
+ */
+function parsePairedDelimiterX(
+  text: string, sourceId: string, lineStarts: readonly number[], start: number, afterKeyword: number, pp: boolean,
+): ParsedAtOffset {
+  const name = readCommandNameArgument(text, afterKeyword);
+  if (!name) return { end: statementEnd(text, afterKeyword) };
+  let cursor = skipTeXWhitespace(text, name.end);
+  const count = readTeXGroup(text, cursor, '[', ']');
+  let argumentCount = 0;
+  const limitations: string[] = [];
+  if (count) {
+    cursor = skipTeXWhitespace(text, count.end);
+    if (/^[0-9]$/.test(count.content.trim())) argumentCount = Number.parseInt(count.content.trim(), 10);
+    else limitations.push('invalid-argument-count');
+  }
+  const groups: TeXGroup[] = [];
+  for (let index = 0; index < (pp ? 5 : 3); index += 1) {
+    const group = readTeXGroup(text, cursor);
+    if (!group) return { end: statementEnd(text, afterKeyword) };
+    groups.push(group);
+    cursor = skipTeXWhitespace(text, group.end);
+  }
+  const [pre, left, right, post, body] = pp
+    ? groups
+    : [undefined, groups[0], groups[1], undefined, groups[2]];
+  const end = groups[groups.length - 1]!.end;
+  const inner = (body?.content ?? '').replace(/\\delimsize(?![A-Za-z@])/g, '');
+  const replacement = `${pre?.content ?? ''}${left!.content}${inner}${right!.content}${post?.content ?? ''}`;
+  const parts = groups.map((group) => `{${group.content}}`).join('');
+  const nativeDeclaration = `\\${pp ? 'DeclarePairedDelimiterXPP' : 'DeclarePairedDelimiterX'}{${name.name}}[${argumentCount}]${parts}`;
+  const definition = buildDefinition({
+    kind: 'command', name: name.name, declaration: 'declare-paired-delimiter', operation: 'new',
+    arguments: buildLatexArguments(argumentCount), limitations: [...limitations, ...analyzeReplacement(replacement, argumentCount)],
+    sourceId, lineStarts, start, end, starred: false, replacement,
+    beginReplacement: left!.content, endReplacement: right!.content, nativeDeclaration,
+  });
+  return { definition, end };
 }
 
 /** siunitx 的全局格式和自定义单位也属于预览依赖，保持源码顺序。 */
@@ -961,6 +1007,7 @@ function buildDefinition(input: {
   replacement?: string;
   beginReplacement?: string;
   endReplacement?: string;
+  nativeDeclaration?: string;
 }): ParsedDefinition {
   const limitations = unique(input.limitations);
   const location = offsetToLocation(input.lineStarts, input.start);
@@ -983,6 +1030,7 @@ function buildDefinition(input: {
     ...(input.replacement !== undefined ? { replacement: input.replacement } : {}),
     ...(input.beginReplacement !== undefined ? { beginReplacement: input.beginReplacement } : {}),
     ...(input.endReplacement !== undefined ? { endReplacement: input.endReplacement } : {}),
+    ...(input.nativeDeclaration !== undefined ? { nativeDeclaration: input.nativeDeclaration } : {}),
   };
 }
 

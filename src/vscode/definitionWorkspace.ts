@@ -676,6 +676,7 @@ function serializeDefinition(definition: ParsedDefinition): string | undefined {
     return undefined;
   }
   if (definition.declaration === 'declare-paired-delimiter') {
+    if (definition.nativeDeclaration) return definition.nativeDeclaration;
     return `\\DeclarePairedDelimiter{${definition.name}}{${definition.beginReplacement}}{${definition.endReplacement}}`;
   }
   if (definition.kind === 'configuration') return `\\sisetup{${definition.replacement ?? ''}}`;

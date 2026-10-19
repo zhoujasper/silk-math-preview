@@ -13,6 +13,7 @@
 !dist/ocr-controller.js
 !dist/ui-locale.js
 !dist/preview-style.js
+!dist/preview-expression.js
 !dist/preview-scroll.js
 !dist/preview-copy.js
 !dist/png-worker.js

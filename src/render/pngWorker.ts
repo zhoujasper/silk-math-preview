@@ -19,6 +19,9 @@ async function renderPng(): Promise<void> {
   const root = xml.documentElement;
   if (root?.localName !== 'svg') throw new Error('invalid-preview-image');
   const preserveWhite = root.getAttribute('data-silk-tikz') === 'true';
+  // 表格里合成的 TikZ 图形同样带有 100 倍的等比缩放，描边必须一起缩放。
+  const scaleStrokes = preserveWhite || root.getElementsByTagName('g').length > 0
+    && Array.from(root.getElementsByTagName('g')).some((node) => node.hasAttribute('data-silk-embed'));
   // 白色背景与节点遮挡必须保持白色，否则会盖住整张图或节点文字。
   const monochrome = (value: string, background = false): string => {
     const color = value.replace(/\s*!important\s*$/i, '').trim().toLowerCase().replace(/\s+/g, '');
@@ -47,6 +50,17 @@ async function renderPng(): Promise<void> {
   if (text.trim()) registerPngFont(text, registerFont);
   const bitmap = make(width, height);
   const context = bitmap.getContext('2d');
+  // PureImage 只认“字号 字体名”；canvg 给斜体/粗体文字的 "italic normal 12px serif"
+  // 会被解析成 NaN 字号而整段消失（例如表格里 \textit 的中文）。去掉样式前缀后按常规字形绘制。
+  const fontAccessor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(context), 'font');
+  if (fontAccessor?.set) {
+    Object.defineProperty(context, 'font', {
+      configurable: true,
+      get: () => fontAccessor.get?.call(context),
+      set: (value: string) => fontAccessor.set!.call(context, String(value)
+        .replace(/^\s*(?:(?:normal|italic|oblique|small-caps|bold|bolder|lighter|[1-9]00)\s+)+/i, '')),
+    });
+  }
   context.fillStyle = '#fff';
   context.fillRect(0, 0, width, height);
   // Canvg 用极小值表达 SVG 的零描边；PureImage 不应把它投影成有宽度的线。
@@ -56,7 +70,7 @@ async function renderPng(): Promise<void> {
     // PureImage transforms path coordinates but leaves stroke widths in local
     // units. Apply uniform SVG scaling (including reflections) for TikZ strokes.
     const width = context.lineWidth;
-    if (preserveWhite) {
+    if (scaleStrokes) {
       const { a, b, c, d } = context.getTransform();
       const x = Math.hypot(a, b), y = Math.hypot(c, d);
       if (Math.abs(x - y) < 1e-6 && Math.abs(a * c + b * d) < 1e-6) context.lineWidth = width * x;

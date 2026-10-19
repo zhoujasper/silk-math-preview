@@ -1,5 +1,41 @@
 # 更新日志 / Changelog
 
+## 0.3.25 - 2026-10-19
+
+### 中文
+
+- 本次 GitHub 发布同时包含未单独发布的 0.3.24：`\text`、`\mbox`、`\tag` 等文本分组内嵌套 `$...$`/`\(...\)` 的公式识别修复（见下方 0.3.24 记录）。
+- 修复 `\DeclarePairedDelimiterX`（及 `XPP`）声明的 `\braket{\psi}{\eta}` 等命令显示成 ⟨ψ⟩η 的问题。此前这类声明未被解析，且预览按命令自动加载的 braket/physics 宏包会让 `\DeclarePairedDelimiter` 声明的 `\ket`、`\bra` 被同名宏包命令取代；现在文档或类文件中的声明优先，`\delimsize`、星号自动伸缩和 `[\big]` 尺寸参数与 mathtools 一致。
+- 修复表格（`tabular`、`longtable` 等）单元格中含 `tikzcd`/`tikzpicture` 时只显示第一张图的问题。整张表格继续由 MathJax 排版（保留中文、横竖线和合并单元格），每张图由 TikZ 引擎单独渲染后放入对应单元格，并按源码缓存，编辑其他单元格不会重新运行 TeX。TikZ 预览关闭时表格照常显示，图形位置显示文字占位；单张图出错时用红色占位标出，不影响其他单元格。
+- `\multicolumn` 按 LaTeX 规则排版：跨列内容获得整段列宽，内容更宽时加宽最后一列，覆盖行内不再画内部竖线，`l`/`c`/`r` 对齐生效。此前宽表头会被挤出表格。
+- 单元格内的嵌套表格、矩阵、`cases` 等不再被外层 `&`/`\\` 拆开；单元格里的 `\small`、`\footnotesize`、`\scriptsize` 等字号命令保留。中文文字宽度估算与实际字形一致，不再在中文后留出空隙。
+- 复制 PNG 时，斜体中文等带字体样式的文字不再缺失，表格内图形的描边随缩放保留。
+- 预览光标不再插入用户宏与其星号、尺寸参数及各参数之间（例如 `\braket*{a}{b}`、`\braket[\Big]{a}{b}`），显示内容不随光标位置改变。
+- 预览表达式构造模块改为首次预览时加载，扩展启动加载的代码减少约 26 KB。
+
+### English
+
+- This GitHub release also includes the unreleased 0.3.24 fix for formulas that nest `$...$`/`\(...\)` inside text groups such as `\text`, `\mbox` and `\tag` (see the 0.3.24 entry below).
+- Fix commands declared with `\DeclarePairedDelimiterX` (and `XPP`), such as `\braket{\psi}{\eta}`, rendering as ⟨ψ⟩η. These declarations were not parsed, and the braket/physics packages that the preview loads automatically replaced `\ket` and `\bra` declared with `\DeclarePairedDelimiter`. Declarations in the document or class file now take precedence, with `\delimsize`, starred auto-sizing and `[\big]` size arguments matching mathtools.
+- Fix tables (`tabular`, `longtable`, etc.) with `tikzcd`/`tikzpicture` cells showing only the first picture. MathJax still lays out the whole table, keeping CJK text, rules and merged cells, while the TikZ engine renders each picture separately into its cell. Pictures are cached by source, so editing other cells does not rerun TeX. With TikZ preview off, the table still renders with text placeholders; a picture with an error shows a red placeholder without affecting other cells.
+- Lay out `\multicolumn` as LaTeX does: spanning content receives the full span width, extra width widens the last spanned column, internal vertical rules are omitted in spanned rows, and `l`/`c`/`r` alignment applies. Wide headers previously overflowed the table.
+- Nested tables, matrices and `cases` inside cells are no longer split by the outer `&`/`\\`; font-size commands such as `\small`, `\footnotesize` and `\scriptsize` are kept in cells. CJK text width estimates now match the glyphs, removing the gap after Chinese text.
+- Copied PNG images no longer drop styled text such as italic Chinese, and pictures inside tables keep their strokes when scaled.
+- Keep the preview caret out of the gaps between a user macro and its star, size argument and arguments (for example `\braket*{a}{b}` and `\braket[\Big]{a}{b}`), so the displayed content does not change with the caret position.
+- Load the preview expression builder on first preview, reducing code loaded at extension startup by about 26 KB.
+
+## 0.3.24 - 2026-10-19
+
+### 中文
+
+- 修复 `$\{\text{cones $C_i$ over } D\}$` 这类在 `\text`、`\mbox`、`\tag`、`\scalebox` 等文本分组里嵌套 `$...$` 或 `\(...\)` 的公式无法识别的问题。分组内成对且分组随后闭合的定界符不再被当成外层公式的结束，多层嵌套、`\(...\)`、`$$...$$`、`\[...\]` 外层及嵌套文本中的光标预览均正常。
+- 正在输入、分组尚未闭合或跨空行的残缺写法保持原有配对与错误恢复，不会吞掉后续公式。增量扫描索引同步处理这一前瞻范围，普通公式编辑仍走局部快速路径。
+
+### English
+
+- Recognize formulas such as `$\{\text{cones $C_i$ over } D\}$` that nest `$...$` or `\(...\)` inside text groups like `\text`, `\mbox`, `\tag` or `\scalebox`. Paired delimiters inside a group that closes afterwards no longer end the outer formula; deeper nesting, `\(...\)`, `$$...$$` and `\[...\]` outer delimiters, and caret previews inside nested text all work.
+- Incomplete input, such as an unclosed group or one spanning a blank line, keeps the previous pairing and error recovery without swallowing later formulas. The incremental scan index accounts for this lookahead while ordinary formula edits keep the local fast path.
+
 ## 0.3.23 - 2026-10-18
 
 ### 中文

@@ -15,6 +15,8 @@ export interface RenderRequest {
   readonly exPx: number;
   /** 未定义命令渲染成红色原文而不是抛错。 */
   readonly markUnknownCommands: boolean;
+  /** 表格单元格内已渲染的 TikZ SVG（数学 Worker 负责合成）。 */
+  readonly embeds?: readonly string[];
 }
 
 export interface DisposeContextRequest {

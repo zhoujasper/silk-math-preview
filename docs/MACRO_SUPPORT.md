@@ -17,7 +17,7 @@
 | 不确定度 | `1.23(4)` 可用 `uncertainty-mode=separate` 或 `separate-uncertainty` 显示为 `1.23 ± 0.04`；指数和数量加括号避免歧义；支持 `uncertainty-mode=full` |
 | 单位排版 | 符号单位支持 `per-mode=fraction/symbol/reciprocal/reciprocal-positive-first`、`sticky-per`、`inter-unit-product`、幂及下标；默认 `\per` 仅作用于下一个单位 |
 | S 列 | 数字、`\num`、可展开的数值宏按实际字形宽度对齐小数点；支持列选项、指数、负数及重复列格式；标题和合并单元格按文本处理 |
-| 自定义宏 | 原有 `\newcommand/\renewcommand/\providecommand/\def`、常见 xparse 声明和数学环境；新增 `\gdef`、`\DeclareRobustCommand`、`\DeclarePairedDelimiter` |
+| 自定义宏 | 原有 `\newcommand/\renewcommand/\providecommand/\def`、常见 xparse 声明和数学环境；新增 `\gdef`、`\DeclareRobustCommand`、`\DeclarePairedDelimiter`；0.3.25 起支持 `\DeclarePairedDelimiterX/XPP`（含 `\delimsize`），文档声明优先于预览自动加载的 braket/physics 同名命令 |
 | 表格文本 | 文本样式、默认参数、嵌套自定义宏、`\ensuremath`、数字和单位命令；不再把这些命令原样打印在文本格里 |
 | 常见宏包 | 根据声明或当前公式中的命令，启用内置的 `mathtools`、`braket`、`upgreek`、`amscd`、`mhchem`、`textcomp`；显式声明 `physics` 时按其含义处理同名 `\qty` |
 
@@ -84,6 +84,12 @@ MathJax 预览路径中执行。未定义命令仍保留错误标记，受限宏
 ### English
 
 GitHub-style backtick-protected inline math and `math` fences are supported alongside the existing dollar, parenthesis, bracket, and environment delimiters. MDX and Notebook Markdown cells share this path. Explicit equation tags retain their contents and placement in SVG and PNG, including tagged equation, align, alignat, gather, and multline environments and their starred forms. Declaration replacement bodies are not independently treated as live formulas. Document-wide automatic numbering, cross-formula references, arbitrary packages, and remote loading remain outside the standalone preview scope.
+
+## 成对定界符 / Paired delimiters（0.3.25）
+
+mathtools 的 `\DeclarePairedDelimiter`、`\DeclarePairedDelimiterX` 与 `\DeclarePairedDelimiterXPP` 按原声明交给 MathJax，`\delimsize`、星号自动伸缩及 `[\big]` 等尺寸参数与 LaTeX 一致。预览会按命令自动加载 braket、physics 等宏包；文档或类文件中声明的同名命令（如 `\ket`、`\bra`、`\braket`）优先。
+
+`\DeclarePairedDelimiter`, `\DeclarePairedDelimiterX` and `\DeclarePairedDelimiterXPP` from mathtools are passed to MathJax as declared, so `\delimsize`, starred auto-sizing and size arguments such as `[\big]` match LaTeX. The preview loads packages such as braket and physics automatically from the commands it sees; same-named commands declared in the document or class file (for example `\ket`, `\bra`, `\braket`) take precedence.
 
 ### 语法依据 / Syntax references
 

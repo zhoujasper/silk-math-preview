@@ -3,15 +3,8 @@ import { performance } from 'node:perf_hooks';
 
 import * as vscode from 'vscode';
 
-import {
-  definitionPreviewSample,
-  isDefinitionOnlySource,
-  withDefinitionPreviewSample,
-} from '../core/definitionPreview';
 import { COMMAND_NS, PRODUCT_NAME } from '../core/channel';
-import { recoverIncompleteTex } from '../core/incompleteTex';
 import { mathRegionContent, regionContainsOffset, selectionOverlapsRegion } from '../core/mathScanner';
-import { buildPreviewExpression } from '../core/previewExpression';
 import { decidePreviewSelection, rebasePreviewRegion, samePreviewRegion, shouldRetainLastPreviewFrame } from '../core/previewSelection';
 import {
   floatingPreviewLayout,
@@ -33,7 +26,9 @@ import {
   type PreviewThemeVariant,
 } from './preview-style';
 import type { PreviewCss } from '../core/previewCss';
-import { isTablePreviewRegion, TABLE_PREVIEW_SCALE } from '../core/tablePreview';
+import {
+  isTablePreviewRegion, TABLE_PREVIEW_SCALE, type TableEmbed, type TableEmbedSize,
+} from '../core/tablePreview';
 import type { MathRegion } from '../core/types';
 import { MathDocumentIndex } from '../core/mathDocumentIndex';
 import { WeightedLru } from '../core/weightedLru';
@@ -41,6 +36,13 @@ import { RenderClient, type RenderClientStats } from '../render/renderClient';
 import { containsTikz, TIKZ_ENVIRONMENTS } from '../tikz/source';
 import type { TikzService } from './tikzService';
 import { noteEditorSelection } from './editorInteraction';
+
+type ExpressionModule = typeof import('./preview-expression');
+let expressionModule: ExpressionModule | undefined;
+/** 表达式构造只在第一次真正预览时加载（见 preview-expression.ts）。 */
+function expressions(): ExpressionModule {
+  return expressionModule ??= require('./preview-expression') as ExpressionModule;
+}
 
 export interface PreviewDefinitionSnapshot {
   readonly fingerprint: string;
@@ -269,6 +271,8 @@ export class PreviewController implements vscode.Disposable {
   private scrollPreview: import('./preview-scroll').ScrollablePreview | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly svgCache = new WeightedLru<CachedSvg>(SVG_CACHE_ENTRIES, SVG_CACHE_BYTES);
+  /** 表格单元格里的图形按源码+TikZ 上下文缓存，编辑其他单元格不重跑 TeX。 */
+  private readonly embedCache = new WeightedLru<{ svg: string; widthPt: number; heightPt: number } | { error: string }>(32, 4 * 1024 * 1024);
   private mathIndex: { readonly document: vscode.TextDocument; readonly index: MathDocumentIndex } | undefined;
   private readonly scanSamples: number[] = [];
   private readonly frameEmitter = new vscode.EventEmitter<PreviewFrame>();
@@ -480,7 +484,8 @@ export class PreviewController implements vscode.Disposable {
       `      行 ${document.positionAt(region.start).line + 1}–${document.positionAt(region.end).line + 1}，${regionSource.length} 字符`,
       `      ${JSON.stringify(regionSource.slice(0, 120))}`,
     );
-    const isTikz = containsTikz(regionSource);
+    // 表格里的图形单独交给 TikZ，表格本身仍走 MathJax（见 renderTableEmbeds）。
+    const isTikz = containsTikz(regionSource) && !isTablePreviewRegion(region);
     if (isTikz && !this.tikzEnabled(document)) return [...lines, 'TikZ 实时预览默认关闭；在 Silk Math 菜单中勾选 TikZ / pgfplots 实时预览。'].join('\n');
     const unsupported = unsupportedContent(regionSource);
     if (unsupported) {
@@ -498,12 +503,22 @@ export class PreviewController implements vscode.Disposable {
         ? { recovery: { ...region.recovery, boundary: region.recovery.boundary - region.start } }
         : {}),
     };
-    const expression = isTikz ? regionSource : recoverIncompleteTex(buildPreviewExpression(
+    const preview = isTikz ? undefined : expressions().buildPreviewExpression(
       regionSource,
       localRegion,
       offset - region.start,
       this.settings.showCaret,
-    ).expression);
+    );
+    let expression = isTikz ? regionSource : expressions().recoverIncompleteTex(preview!.expression);
+    let embedSvgs: readonly string[] = [];
+    if (preview?.embeds && preview.embedExpression) {
+      const embedded = await this.renderTableEmbeds(document, region, snapshot, preview.embeds);
+      if (embedded) {
+        expression = expressions().recoverIncompleteTex(expressions().resolveTableEmbeds(preview.embedExpression, preview.embeds, embedded.sizes, embedded.failed));
+        embedSvgs = embedded.svgs;
+        lines.push(`表格内图形: ${preview.embeds.length} 个，${embedded.svgs.filter(Boolean).length} 个已渲染${embedded.errors.length ? `；失败: ${embedded.errors.join(' | ').slice(0, 300)}` : ''}`);
+      }
+    }
     lines.push(`表达式: ${JSON.stringify(expression.slice(0, 400))}`);
 
     const metrics = this.editorMetrics(document);
@@ -520,6 +535,7 @@ export class PreviewController implements vscode.Disposable {
       fullSize: true,
       exPx: metrics.exPx,
       markUnknownCommands: this.settings.markUnknownCommands,
+      ...(embedSvgs.length ? { embeds: embedSvgs } : {}),
     });
     if (!response.ok) {
       lines.push(`渲染失败: ${response.error}`);
@@ -715,7 +731,8 @@ export class PreviewController implements vscode.Disposable {
         ? { recovery: { ...region.recovery, boundary: region.recovery.boundary - region.start } }
         : {}),
     };
-    const isTikz = containsTikz(regionSource);
+    // 表格单元格里的图形另行渲染后合成；整张表仍由 MathJax 排版，保留中文和规则线。
+    const isTikz = containsTikz(regionSource) && !isTablePreviewRegion(region);
     this.lastTikzDocument = isTikz ? document.uri.toString() : undefined;
     if (isTikz && !this.tikzEnabled(document)) {
       this.tikz?.cancel();
@@ -732,27 +749,28 @@ export class PreviewController implements vscode.Disposable {
       this.emitFrame(editor, region, { status: 'idle' });
       return;
     }
-    const definitionOnly = !isTikz && isDefinitionOnlySource(content);
+    const definitionOnly = !isTikz && expressions().isDefinitionOnlySource(content);
     if (definitionOnly && !this.settings.previewDefinitions) {
       this.clearFailureNotice();
       this.clearEditor(editor);
       this.emitFrame(editor, region, { status: 'idle' });
       return;
     }
-    if (definitionOnly && !definitionPreviewSample(content)) {
+    if (definitionOnly && !expressions().definitionPreviewSample(content)) {
       this.clearFailureNotice();
       this.clearEditor(editor);
       this.emitFrame(editor, region, { status: 'idle' });
       return;
     }
-    const built = isTikz ? regionSource : buildPreviewExpression(
+    const preview = isTikz ? undefined : expressions().buildPreviewExpression(
       regionSource,
       localRegion,
       caretOffset - region.start,
       showCaret && !definitionOnly,
-    ).expression;
-    const expression = isTikz ? built : recoverIncompleteTex(
-      definitionOnly ? withDefinitionPreviewSample(built, content) : built,
+    );
+    const built = isTikz ? regionSource : preview!.expression;
+    let expression = isTikz ? built : expressions().recoverIncompleteTex(
+      definitionOnly ? expressions().withDefinitionPreviewSample(built, content) : built,
     );
     let prelude: string;
     try { prelude = isTikz ? await this.tikzPrelude(document, region, snapshot) : snapshot.prelude; }
@@ -773,12 +791,21 @@ export class PreviewController implements vscode.Disposable {
       else this.clearEditor(editor);
       return;
     }
+    let embedSvgs: readonly string[] = [];
+    let embedded: Awaited<ReturnType<PreviewController['renderTableEmbeds']>>;
+    if (preview?.embeds && preview.embedExpression) {
+      embedded = await this.renderTableEmbeds(document, region, snapshot, preview.embeds);
+      if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor || !embedded) return;
+      expression = expressions().recoverIncompleteTex(expressions().resolveTableEmbeds(preview.embedExpression, preview.embeds, embedded.sizes, embedded.failed));
+      embedSvgs = embedded.svgs;
+      if (embedded.errors.length) this.trace(`table picture failed: ${embedded.errors.join(' | ').slice(0, 300)}`);
+    }
     // 表格常常比正文公式宽得多，整体缩小一档才放得下。
     const scale = isTikz ? this.settings.previewScale / 1.35 : mathPreviewScale(region);
     const key = cacheKey(
       expression,
       displayMode,
-      isTikz ? `tikz:${prelude}` : snapshot.fingerprint,
+      isTikz ? `tikz:${prelude}` : embedded ? `${snapshot.fingerprint}|${embedded.key}` : snapshot.fingerprint,
       isTikz ? '' : palette.foreground,
       isTikz ? '' : palette.caret,
       isTikz ? 0 : metrics.exPx,
@@ -799,6 +826,7 @@ export class PreviewController implements vscode.Disposable {
         fullSize: true,
         exPx: metrics.exPx,
         markUnknownCommands: this.settings.markUnknownCommands,
+        ...(embedSvgs.length ? { embeds: embedSvgs } : {}),
       };
       let response = await (isTikz ? this.tikz! : this.renderClient).render(renderInput);
       if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
@@ -807,9 +835,10 @@ export class PreviewController implements vscode.Disposable {
       // valid content must remain visible even where an exact caret is unsafe.
       if (!response.ok && response.error !== 'cancelled' && response.error !== 'superseded'
         && !isTikz && showCaret && !definitionOnly) {
-        const unmarked = recoverIncompleteTex(buildPreviewExpression(
-          regionSource, localRegion, caretOffset - region.start, false,
-        ).expression);
+        const plain = expressions().buildPreviewExpression(regionSource, localRegion, caretOffset - region.start, false);
+        const unmarked = expressions().recoverIncompleteTex(embedded && plain.embeds && plain.embedExpression
+          ? expressions().resolveTableEmbeds(plain.embedExpression, plain.embeds, embedded.sizes, embedded.failed)
+          : plain.expression);
         if (unmarked !== expression) {
           this.trace('retry render without preview caret');
           response = await this.renderClient.render({ ...renderInput, expression: unmarked });
@@ -860,6 +889,69 @@ export class PreviewController implements vscode.Disposable {
     }
     if (epoch !== this.epoch || editor !== vscode.window.activeTextEditor) return;
     this.applyDecoration(editor, region, rendered, metrics, key);
+  }
+
+  /**
+   * 表格单元格里的每个图形单独用真正的 TeX 渲染并按源码缓存；表格其他单元格编辑时不重跑 TeX。
+   * TikZ 预览未开启时只返回空结果，表格中显示文字占位，其余内容照常预览。
+   * 返回 undefined 表示被更新的请求取代，调用方放弃本帧。
+   */
+  private async renderTableEmbeds(
+    document: vscode.TextDocument,
+    region: MathRegion,
+    snapshot: PreviewDefinitionSnapshot,
+    embeds: readonly TableEmbed[],
+  ): Promise<{ svgs: string[]; sizes: (TableEmbedSize | undefined)[]; failed: boolean[]; errors: string[]; key: string } | undefined> {
+    const svgs: string[] = [];
+    const sizes: (TableEmbedSize | undefined)[] = [];
+    const failed: boolean[] = [];
+    const errors: string[] = [];
+    const hash = createHash('sha256');
+    if (!this.tikzEnabled(document)) {
+      for (const embed of embeds) hash.update(embed.source).update('\0');
+      return { svgs, sizes, failed, errors, key: `off:${hash.digest('hex').slice(0, 16)}` };
+    }
+    const prelude = await this.tikzPrelude(document, region, snapshot);
+    hash.update(prelude).update('\0');
+    for (const embed of embeds) {
+      const key = createHash('sha256').update(prelude).update('\0').update(embed.source).digest('hex');
+      hash.update(key);
+      let entry = this.embedCache.get(key);
+      if (!entry) {
+        const response = await this.tikz!.render({
+          expression: embed.source,
+          displayMode: true,
+          definitionFingerprint: snapshot.fingerprint,
+          definitionPrelude: prelude,
+          packages: snapshot.packages ?? [],
+          foreground: '#000',
+          caretColor: '#000',
+          scale: 1,
+          fullSize: true,
+          exPx: 0,
+          markUnknownCommands: false,
+        });
+        if (!response.ok && (response.error === 'cancelled' || response.error === 'superseded')) return undefined;
+        const viewBox = response.ok
+          ? /\sviewBox="([^"]*)"/.exec(response.svg)?.[1]?.trim().split(/[\s,]+/).map(Number)
+          : undefined;
+        entry = response.ok && viewBox && viewBox.length === 4 && viewBox[2]! > 0 && viewBox[3]! > 0
+          ? { svg: response.svg, widthPt: viewBox[2]!, heightPt: viewBox[3]! }
+          : { error: response.ok ? 'TikZ: invalid picture size' : response.error };
+        this.embedCache.set(key, entry, 2 * ('svg' in entry ? entry.svg.length : entry.error.length) + 2 * key.length + 64);
+      }
+      if ('svg' in entry) {
+        svgs.push(entry.svg);
+        sizes.push({ widthPt: entry.widthPt, heightPt: entry.heightPt });
+        failed.push(false);
+      } else {
+        svgs.push('');
+        sizes.push(undefined);
+        failed.push(true);
+        errors.push(entry.error);
+      }
+    }
+    return { svgs, sizes, failed, errors, key: hash.digest('hex').slice(0, 16) };
   }
 
   private tikzEnabled(document?: vscode.TextDocument): boolean {

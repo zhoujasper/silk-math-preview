@@ -24,7 +24,31 @@ export const TABLE_ENVIRONMENTS: readonly string[] = Object.freeze([
 const TABLE_ENVIRONMENT_SET: ReadonlySet<string> = new Set(TABLE_ENVIRONMENTS);
 
 /** 单元格里可以展开成多行的命令。 */
-const CELL_STACK_COMMANDS: ReadonlySet<string> = new Set(['makecell', 'thead', 'tabincell']);
+const CELL_STACK_COMMANDS: ReadonlySet<string> = new Set(['makecell', 'thead', 'tabincell', 'shortstack']);
+
+/**
+ * 单元格里的图形交给真正的 TeX/TikZ 引擎单独渲染，表格本身仍由 MathJax 排版
+ * （中文、规则线、合并单元格都保留）。这里只把图形换成占位命令并记录源码。
+ */
+const EMBED_ENVIRONMENTS = /\\begin\s*\{(tikzpicture|tikzcd|pgfpicture|circuitikz)\}/g;
+export const TABLE_EMBED_COMMAND = 'silkTableEmbed';
+const EMBED_TOKEN = /\\silkTableEmbed\{(\d+)\}/g;
+
+export interface TableEmbed {
+  /** 不含预览光标的图形源码。 */
+  readonly source: string;
+  readonly environment: string;
+  /** 光标原本落在图形内部；占位后面补一个光标。 */
+  readonly caret: boolean;
+}
+
+/** 图形渲染后的尺寸（TeX pt）；undefined 表示未开启或失败，用文字占位。 */
+export interface TableEmbedSize {
+  readonly widthPt: number;
+  readonly heightPt: number;
+}
+
+const MAX_TABLE_EMBEDS = 32;
 
 const MAX_CELL_DEPTH = 3;
 const MAX_COLUMN_REPEAT = 64;
@@ -55,6 +79,76 @@ function skipSpace(text: string, offset: number): number {
 interface Delimited {
   readonly content: string;
   readonly end: number;
+}
+
+/** 从 `\\begin{name}` 处找到同名匹配的 `\\end{name}` 之后；未闭合返回 undefined。 */
+function environmentSpanEnd(text: string, start: number, name: string): number | undefined {
+  const heads = /\\(begin|end)\s*\{([^{}]*)\}/g;
+  heads.lastIndex = start;
+  let depth = 0;
+  for (let head = heads.exec(text); head; head = heads.exec(text)) {
+    if (isEscaped(text, head.index) || head[2] !== name) continue;
+    depth += head[1] === 'begin' ? 1 : -1;
+    if (depth === 0) return heads.lastIndex;
+  }
+  return undefined;
+}
+
+/** `\\begin`/`\\end` 后面不是字母时才是环境边界。 */
+function environmentHeadAt(text: string, cursor: number): 1 | -1 | 0 {
+  if (text[cursor] !== '\\' || isEscaped(text, cursor)) return 0;
+  if (text.startsWith('\\begin', cursor) && !/[A-Za-z@]/.test(text[cursor + 6] ?? '')) return 1;
+  if (text.startsWith('\\end', cursor) && !/[A-Za-z@]/.test(text[cursor + 4] ?? '')) return -1;
+  return 0;
+}
+
+function extractEmbeds(body: string, caretMarker: string, embeds: TableEmbed[]): string {
+  const rawCaret = caretMarker.replace(/^\$|\$$/g, '');
+  let result = '';
+  let cursor = 0;
+  EMBED_ENVIRONMENTS.lastIndex = 0;
+  for (let match = EMBED_ENVIRONMENTS.exec(body); match; match = EMBED_ENVIRONMENTS.exec(body)) {
+    if (isEscaped(body, match.index) || embeds.length >= MAX_TABLE_EMBEDS) continue;
+    const environment = match[1]!;
+    const end = environmentSpanEnd(body, match.index, environment) ?? body.length;
+    let source = body.slice(match.index, end);
+    let caret = false;
+    if (rawCaret && source.includes(rawCaret)) {
+      caret = true;
+      source = source.split(caretMarker).join('').split(rawCaret).join('');
+    }
+    result += body.slice(cursor, match.index) + `\\${TABLE_EMBED_COMMAND}{${embeds.length}}` + (caret ? rawCaret : '');
+    embeds.push({ source, environment, caret });
+    cursor = end;
+    EMBED_ENVIRONMENTS.lastIndex = end;
+  }
+  return result + body.slice(cursor);
+}
+
+/**
+ * 把占位换成可测量的透明框：尺寸按 TeX pt 给出（MathJax 中 1pt=0.1em，与 10pt 正文一致），
+ * 竖直方向以数学轴为中心。渲染器随后把对应 SVG 放进这个框。
+ */
+export function resolveTableEmbeds(
+  expression: string,
+  embeds: readonly TableEmbed[],
+  sizes: readonly (TableEmbedSize | undefined)[] = [],
+  failed: readonly boolean[] = [],
+): string {
+  return expression.replace(EMBED_TOKEN, (_whole, digits: string) => {
+    const index = Number(digits);
+    const size = sizes[index];
+    if (size && size.widthPt > 0 && size.heightPt > 0) {
+      const width = Math.round(size.widthPt * 1000) / 1000;
+      const height = Math.round(size.heightPt * 1000) / 1000;
+      const depth = Math.round(Math.max(0, height / 2 - 2.5) * 1000) / 1000;
+      return `\\class{silk-embed-${index}}{\\rule[-${depth}pt]{${width}pt}{${height}pt}}`;
+    }
+    const label = (embeds[index]?.environment ?? 'tikz').replace(/[^A-Za-z]/g, '');
+    return failed[index]
+      ? `\\boxed{\\color{red}{\\scriptsize\\text{${label}}}}`
+      : `\\boxed{\\scriptsize\\text{${label}}}`;
+  });
 }
 
 function readDelimited(text: string, start: number, open: string, close: string): Delimited | undefined {
@@ -223,11 +317,7 @@ const TABLE_COMMAND_RULES: Readonly<Record<string, CommandRule>> = Object.freeze
   raggedright: { required: 0, replace: DROP },
   raggedleft: { required: 0, replace: DROP },
   arraybackslash: { required: 0, replace: DROP },
-  small: { required: 0, replace: DROP },
-  footnotesize: { required: 0, replace: DROP },
-  scriptsize: { required: 0, replace: DROP },
-  tiny: { required: 0, replace: DROP },
-  normalsize: { required: 0, replace: DROP },
+  // 字号命令保留：MathJax 文本模式支持 \small/\footnotesize 等，单元格大小与 LaTeX 一致。
   tabularnewline: { required: 0, replace: () => '\\\\' },
 });
 
@@ -364,6 +454,7 @@ function rewriteTableCommands(text: string): string {
 function splitTopLevel(text: string, separator: '\\\\' | '&'): string[] {
   const parts: string[] = [];
   let depth = 0;
+  let environmentDepth = 0;
   let start = 0;
   let cursor = 0;
   while (cursor < text.length) {
@@ -382,13 +473,20 @@ function splitTopLevel(text: string, separator: '\\\\' | '&'): string[] {
       cursor += 1;
       continue;
     }
-    if (depth === 0 && separator === '&' && character === '&') {
+    // 嵌套环境（矩阵、内层表格、cases 等）里的 `&`/`\\\\` 属于内层对齐。
+    const head = environmentHeadAt(text, cursor);
+    if (head !== 0 && !text.startsWith('\\\\', cursor)) {
+      environmentDepth = Math.max(0, environmentDepth + head);
+      cursor += head > 0 ? 6 : 4;
+      continue;
+    }
+    if (depth === 0 && environmentDepth === 0 && separator === '&' && character === '&') {
       parts.push(text.slice(start, cursor));
       cursor += 1;
       start = cursor;
       continue;
     }
-    if (depth === 0 && separator === '\\\\' && text.startsWith('\\\\', cursor)) {
+    if (depth === 0 && environmentDepth === 0 && separator === '\\\\' && text.startsWith('\\\\', cursor)) {
       parts.push(text.slice(start, cursor));
       cursor += 2;
       if (text[cursor] === '*') cursor += 1;
@@ -442,6 +540,33 @@ function translateCell(text: string, depth: number): string {
         continue;
       }
     }
+    if (name === TABLE_EMBED_COMMAND) {
+      const index = readGroup(trimmed, cursor + 1 + name.length);
+      // 写在 `$...$` 里的图形已经处于数学模式，留在原位，不能拆开这对美元符。
+      const inMath = (plain.match(/(?<!\\)\$/g)?.length ?? 0) % 2 === 1;
+      if (index && /^\d+$/.test(index.content) && !inMath) {
+        rendered += wrapText(plain);
+        plain = '';
+        rendered += trimmed.slice(cursor, index.end);
+        cursor = index.end;
+        continue;
+      }
+    }
+    if (name === 'begin') {
+      const nested = /^\\begin\s*\{([^{}]*)\}/.exec(trimmed.slice(cursor));
+      const environment = nested?.[1];
+      const end = environment && isTableEnvironment(environment)
+        ? environmentSpanEnd(trimmed, cursor, environment)
+        : undefined;
+      if (nested && environment && end !== undefined) {
+        const inner = trimmed.slice(cursor + nested[0].length, end).replace(/\\end\s*\{[^{}]*\}$/, '');
+        rendered += wrapText(plain);
+        plain = '';
+        rendered += buildTableExpression(inner, '', undefined, depth + 1);
+        cursor = end;
+        continue;
+      }
+    }
     if (name !== undefined && CELL_STACK_COMMANDS.has(name)) {
       let scan = skipSpace(trimmed, cursor + 1 + name.length);
       for (let index = 0; index < 2; index += 1) {
@@ -480,10 +605,32 @@ interface TableRow {
 /** 规则命令可能出现在行首或被写在单元格前，统一提到行首。 */
 function hoistRules(text: string): { readonly rules: string; readonly rest: string } {
   let rules = '';
-  const rest = text.replace(/\\hline\b\s*/g, () => {
-    rules += '\\hline ';
-    return '';
-  });
+  let rest = '';
+  let braceDepth = 0;
+  let environmentDepth = 0;
+  let cursor = 0;
+  // 只提取本层表格的横线；内层表格/单元格分组里的 \\hline 留给它自己。
+  while (cursor < text.length) {
+    const character = text[cursor];
+    if (character === '\\' && !isEscaped(text, cursor)) {
+      const head = environmentHeadAt(text, cursor);
+      if (head !== 0) environmentDepth = Math.max(0, environmentDepth + head);
+      const hline = /^\\hline(?![A-Za-z@])\s*/.exec(text.slice(cursor, cursor + 64));
+      if (hline && braceDepth === 0 && environmentDepth === 0) {
+        rules += '\\hline ';
+        cursor += hline[0].length;
+        continue;
+      }
+      const command = /^\\(?:[A-Za-z@]+|[\s\S])/.exec(text.slice(cursor, cursor + 64))?.[0] ?? '\\';
+      rest += command;
+      cursor += command.length;
+      continue;
+    }
+    if (character === '{') braceDepth += 1;
+    else if (character === '}') braceDepth = Math.max(0, braceDepth - 1);
+    rest += character;
+    cursor += 1;
+  }
   return { rules, rest };
 }
 
@@ -503,9 +650,16 @@ function translateRow(text: string, numeric: readonly (string | undefined)[], ca
  * 把表格环境正文翻译成 `array` 表达式。输入应当已经插好光标标记，
  * 标记在文本单元格里必须自带 `$...$`，由调用方保证。
  */
-export function buildTableExpression(body: string, caretMarker = ''): string {
+export function buildTableExpression(
+  body: string,
+  caretMarker = '',
+  embeds?: TableEmbed[],
+  depth = 0,
+): string {
+  if (depth > MAX_CELL_DEPTH) return wrapText(body);
   const preamble = readTablePreamble(body);
-  const rewritten = rewriteTableCommands(body.slice(preamble.bodyStart));
+  const tableBody = body.slice(preamble.bodyStart);
+  const rewritten = rewriteTableCommands(embeds ? extractEmbeds(tableBody, caretMarker, embeds) : tableBody);
   const numeric: Array<string | undefined> = [];
   const alignment = normalizeColumnSpec(preamble.spec, 0, numeric);
   const rows = splitTopLevel(rewritten, '\\\\')

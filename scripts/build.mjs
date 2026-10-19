@@ -86,6 +86,14 @@ const builds = [
   },
   {
     ...shared,
+    entryPoints: ['src/vscode/preview-expression.ts'],
+    plugins: [...shared.plugins, sharedScanner],
+    outfile: 'dist/preview-expression.js',
+    platform: 'node',
+    format: 'cjs',
+  },
+  {
+    ...shared,
     entryPoints: ['src/vscode/preview-style.ts'],
     outfile: 'dist/preview-style.js',
     platform: 'node',
@@ -139,7 +147,7 @@ const builds = [
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    external: ['vscode', './tikz-context.js', './preview-style', './preview-scroll', './preview-css', './math-completion.js', './file-patterns', './settings-ui', './ocr-controller'],
+    external: ['vscode', './tikz-context.js', './preview-style', './preview-expression', './preview-scroll', './preview-css', './math-completion.js', './file-patterns', './settings-ui', './ocr-controller'],
   },
   {
     ...shared,

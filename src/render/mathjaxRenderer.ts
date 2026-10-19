@@ -1,3 +1,4 @@
+import { composeTableEmbeds } from './embedSvg';
 import { mathjax } from '@mathjax/src/js/mathjax.js';
 import { liteAdaptor } from '@mathjax/src/js/adaptors/liteAdaptor.js';
 import { RegisterHTMLHandler } from '@mathjax/src/js/handlers/html.js';
@@ -7,6 +8,7 @@ import type { SvgWrapper, SvgWrapperClass } from '@mathjax/src/js/output/svg/Wra
 import type { SvgWrapperFactory } from '@mathjax/src/js/output/svg/WrapperFactory.js';
 import type { MmlNode } from '@mathjax/src/js/core/MmlTree/MmlNode.js';
 import { SvgMtable, type SvgMtableNTD } from '@mathjax/src/js/output/svg/Wrappers/mtable.js';
+import { SvgMtr, type SvgMtrNTD } from '@mathjax/src/js/output/svg/Wrappers/mtr.js';
 import { MathJaxTexFont } from '@mathjax/mathjax-tex-font/js/svg.js';
 import { Configuration } from '@mathjax/src/js/input/tex/Configuration.js';
 import { EnvironmentMap } from '@mathjax/src/js/input/tex/TokenMap.js';
@@ -28,7 +30,7 @@ import { recoverIncompleteTex } from '../core/incompleteTex';
 import { renderPackages } from './packageSupport';
 import { clearSiCaches, SI_OPTIONS_KEY, SI_PRELUDE_KEY } from './siunitx';
 import { alignSiColumns, SI_CELLS_KEY, type SiCell } from './siAlignment';
-import { parseArrayHlineBoundaries, parseSpanClass } from '../core/tablePreview';
+import { parseArrayHlineBoundaries, parseSpanClass, type TableCellSpan } from '../core/tablePreview';
 
 const EM = 16;
 const EX = 8;
@@ -74,6 +76,8 @@ export interface SvgRenderOptions {
   readonly exPx: number;
   /** 未定义命令渲染成红色原文而不是抛错，方便一眼看出真正写错的地方。 */
   readonly markUnknownCommands: boolean;
+  /** 表格单元格内已渲染的 TikZ SVG，按 `silk-embed-N` 下标对应。 */
+  readonly embeds?: readonly string[];
 }
 
 export interface SvgRenderResult {
@@ -114,7 +118,115 @@ class PreviewSVG extends SVG<unknown, unknown, unknown> {
 const PreviewMtableBase: Pick<SvgWrapperClass<unknown, unknown, unknown>, keyof SvgWrapperClass<unknown, unknown, unknown>> & {
   new (factory: SvgWrapperFactory<unknown, unknown, unknown>, node: MmlNode, parent?: SvgWrapper<unknown, unknown, unknown>): SvgMtableNTD<unknown, unknown, unknown>;
 } = SvgMtable;
+type AnyWrapper = SvgWrapper<unknown, unknown, unknown>;
+
+/** `\multicolumn` 渲染成带 silk-span 类的 mrow；从单元格往下找这层标记。 */
+function cellSpan(cell: AnyWrapper): TableCellSpan | undefined {
+  let level: MmlNode[] = [cell.node];
+  for (let depth = 0; depth < 6 && level.length > 0; depth += 1) {
+    for (const node of level) {
+      const className = node.attributes?.get('class');
+      const span = typeof className === 'string' ? parseSpanClass(className) : undefined;
+      if (span) return span;
+    }
+    // 光标标记等兄弟节点可能和跨列内容并列，只看前几个子节点。
+    level = level.flatMap((node) => (node.childNodes as MmlNode[] | undefined)?.slice(0, 4) ?? []);
+  }
+  return undefined;
+}
+
 class PreviewMtable extends PreviewMtableBase {
+  /** 跨列单元格：起始列、列数和自然宽度，宽度不计入单列，按 LaTeX 规则补给最后一列。 */
+  // MathJax 在构造期间就计算表格数据；字段初始化器会在那之后把记录清空，因此只声明不初始化。
+  declare private silkSpans: Array<{ readonly row: number; readonly column: number; readonly count: number; readonly width: number }>;
+
+  override getTableData(): ReturnType<SvgMtableNTD<unknown, unknown, unknown>['getTableData']> {
+    if (this.data) return this.data;
+    this.silkSpans = [];
+    const data = super.getTableData();
+    if (this.silkSpans.length === 0) return data;
+    const space = this.getColumnHalfSpacing();
+    const lines = [this.fLine, ...this.cLines, this.fLine];
+    for (const span of this.silkSpans.sort((a, b) => a.count - b.count)) {
+      const last = Math.min(data.W.length - 1, span.column + span.count - 1);
+      let available = data.W[span.column] ?? 0;
+      for (let k = span.column; k < last; k += 1) available += 2 * (space[k + 1] ?? 0) + (lines[k + 1] ?? 0) + (data.W[k + 1] ?? 0);
+      if (span.width > available) data.W[last] = (data.W[last] ?? 0) + span.width - available;
+    }
+    return data;
+  }
+
+  /** LaTeX 中 `\multicolumn` 覆盖的行没有内部竖线；按行把竖线拆成几段。 */
+  protected handleColumnLines(svg: unknown): void {
+    const self = this as unknown as {
+      node: MmlNode; adaptor: { append(parent: unknown, child: unknown): void; setAttribute(node: unknown, name: string, value: string): void };
+      getColumnAttributes(name: string): string[] | null; makeVLine(x: number, style: string, t: number): unknown;
+      getRowHD(equal: boolean, HD: number, H: number, D: number): [number, number]; getEqualRowHeight(): number;
+      fixed(value: number): string;
+    };
+    const lines = self.node.attributes.get('columnlines') === 'none' ? null : self.getColumnAttributes('columnlines');
+    this.getTableData();
+    if (!lines || !this.silkSpans || this.silkSpans.every((span) => span.count <= 1)) {
+      (PreviewMtableBase.prototype as unknown as { handleColumnLines(this: unknown, svg: unknown): void }).handleColumnLines.call(this, svg);
+      return;
+    }
+    const { H, D } = this.getTableData();
+    const equal = self.node.attributes.get('equalrows') as boolean;
+    const HD = self.getEqualRowHeight();
+    const rowSpace = this.getRowHalfSpacing();
+    const rowExtent: Array<[number, number]> = [];
+    let y = this.getBBox().h - this.fLine;
+    for (let j = 0; j < H.length; j += 1) {
+      const [rH, rD] = self.getRowHD(equal, HD, H[j]!, D[j]!);
+      const top = y;
+      y -= rowSpace[j]! + rH + rD + rowSpace[j + 1]!;
+      rowExtent.push([y, top]);
+      y -= this.rLines[j] ?? 0;
+    }
+    const { h, d } = this.getBBox();
+    const space = this.getColumnHalfSpacing();
+    const widths = this.getComputedWidths();
+    let x = this.fLine;
+    for (let i = 0; i < lines.length; i += 1) {
+      x += space[i]! + widths[i]! + space[i + 1]!;
+      if (lines[i] !== 'none') {
+        const covered = this.silkSpans
+          .filter((span) => span.column <= i && i < span.column + span.count - 1 && rowExtent[span.row])
+          .map((span) => rowExtent[span.row]!)
+          .sort((a, b) => b[1] - a[1]);
+        let upper = h;
+        const segments: Array<[number, number]> = [];
+        for (const [bottom, top] of covered) {
+          if (top < upper) segments.push([top, upper]);
+          upper = Math.min(upper, bottom);
+        }
+        if (upper > -d) segments.push([-d, upper]);
+        for (const [low, high] of segments) {
+          if (high - low <= 1e-6) continue;
+          const line = self.makeVLine(x, lines[i]!, this.cLines[i]!);
+          self.adaptor.setAttribute(line, 'y1', self.fixed(low));
+          self.adaptor.setAttribute(line, 'y2', self.fixed(high));
+          self.adaptor.append(svg, line);
+        }
+      }
+      x += this.cLines[i] ?? 0;
+    }
+  }
+
+  override updateHDW(
+    cell: AnyWrapper, i: number, j: number, align: string, H: number[], D: number[], W: number[] | null = null, _M?: number,
+  ): void {
+    const span = W ? cellSpan(cell) : undefined;
+    if (!span || span.colspan <= 1) {
+      super.updateHDW(cell as never, i, j, align, H, D, W as number[], undefined as never);
+      return;
+    }
+    super.updateHDW(cell as never, i, j, align, H, D, null as unknown as number[], undefined as never);
+    const scale = cell.parent?.bbox.rscale ?? 1;
+    this.silkSpans.push({ row: j, column: i, count: span.colspan, width: cell.getBBox().w * scale });
+  }
+
+
   // MathJax 默认用两层 100% SVG 和页面 CSS 分别定位公式和编号。
   // 独立图片直接使用布局盒的左右留白，保留标签内容和行基线。
   topTable(svg: unknown, labels: unknown, side: string): void {
@@ -126,13 +238,53 @@ class PreviewMtable extends PreviewMtableBase {
   }
 }
 
+const PreviewMtrBase: Pick<SvgWrapperClass<unknown, unknown, unknown>, keyof SvgWrapperClass<unknown, unknown, unknown>> & {
+  new (factory: SvgWrapperFactory<unknown, unknown, unknown>, node: MmlNode, parent?: SvgWrapper<unknown, unknown, unknown>): SvgMtrNTD<unknown, unknown, unknown>;
+} = SvgMtr;
+
+/**
+ * 跨列单元格直接拿到整段列宽，并按 `\multicolumn` 的对齐方式在其中排版；
+ * 被覆盖的空单元格不占位置。旧做法在 SVG 上按列起点平移，内容比单列宽时会挤出表格。
+ */
+class PreviewMtr extends PreviewMtrBase {
+  protected placeCells(svg: unknown[]): void {
+    const parent = this.parent as unknown as SvgMtableNTD<unknown, unknown, unknown>;
+    const space = parent.getColumnHalfSpacing();
+    const lines = [parent.fLine, ...parent.cLines, parent.fLine];
+    const widths = parent.getComputedWidths();
+    const scale = 1 / this.getBBox().rscale;
+    let x = lines[0]!;
+    for (let i = 0; i < this.numCells; i += 1) {
+      const child = this.getChild(i) as unknown as AnyWrapper;
+      (child as unknown as { toSVG(parents: unknown[]): void }).toSVG(svg);
+      const span = cellSpan(child);
+      const last = span ? Math.min(this.numCells - 1, i + Math.max(1, span.colspan) - 1) : i;
+      let width = widths[i] ?? 0;
+      for (let k = i; k < last; k += 1) width += 2 * (space[k + 1] ?? 0) + (lines[k + 1] ?? 0) + (widths[k + 1] ?? 0);
+      if (span) child.node.attributes.set('columnalign', span.align === 'l' ? 'left' : span.align === 'r' ? 'right' : 'center');
+      x += this.placeCell(child as never, {
+        x, y: 0,
+        lSpace: space[i]! * scale, rSpace: space[last + 1]! * scale,
+        w: width * scale,
+        lLine: lines[i]! * scale, rLine: lines[last + 1]! * scale,
+      });
+      for (let k = i + 1; k <= last; k += 1) {
+        (this.getChild(k) as unknown as { toSVG(parents: unknown[]): void }).toSVG(svg);
+      }
+      i = last;
+    }
+  }
+}
+
 interface RenderContext {
   readonly document: ReturnType<typeof mathjax.document>;
   readonly adaptor: ReturnType<typeof liteAdaptor>;
   readonly tex: PreviewTeX;
 }
 
-const SHARED_ADAPTOR = liteAdaptor({ fontSize: EM });
+// 未知字符只能估宽：CJK 文字以 0.884em 字号输出（见 SVG 的 font-size），全角字形前进宽度正好 1 个字号。
+// 默认按 1em 估算会让中文后面留出约 13% 的空白，与 LaTeX 排版不一致。
+const SHARED_ADAPTOR = liteAdaptor({ fontSize: EM, cjkCharWidth: 0.884 });
 RegisterHTMLHandler(SHARED_ADAPTOR);
 const SHARED_OUTPUT = new PreviewSVG({
   fontCache: 'none',
@@ -140,6 +292,7 @@ const SHARED_OUTPUT = new PreviewSVG({
   fontData: MathJaxTexFont,
 });
 SHARED_OUTPUT.factory.setNodeClass('mtable', PreviewMtable as unknown as SvgWrapperClass<unknown, unknown, unknown>);
+SHARED_OUTPUT.factory.setNodeClass('mtr', PreviewMtr as unknown as SvgWrapperClass<unknown, unknown, unknown>);
 
 SHARED_OUTPUT.preFilters.add((data: unknown) => {
   const { math } = data as { math: { inputJax: TeX<unknown, unknown, unknown> } };
@@ -1225,11 +1378,9 @@ function applyTableCellSpans(svg: string): string {
     const endX = row.cells[lastCol]?.x ?? origin.x;
     const startY = row.y;
     const endY = rows[lastRow]?.y ?? row.y;
-    const dx = span.align === 'l'
-      ? 0
-      : span.align === 'r'
-        ? endX - startX
-        : (endX - startX) / 2;
+    // 跨列已在 PreviewMtr 中按整段列宽排版，这里只处理跨行的竖直居中。
+    void startX; void endX;
+    const dx = 0;
     const dy = (endY - startY) / 2;
     const openEnd = svg.indexOf('>', markStart) + 1;
     edits.push({
@@ -1452,7 +1603,11 @@ export class MathJaxSvgRenderer {
       // 独立 SVG 是 XML：HTML 序列化会保留属性里的 < / >，使 data-latex
       // 中的 0<a<L 被后续清理误认成 <a> 标签，且随光标注入位置偶发损坏。
       const raw = context.adaptor.serializeXML(node);
-      const svg = sanitizeStandaloneSvg(raw, options.foreground, options.caretColor, recovered);
+      const svg = composeTableEmbeds(
+        sanitizeStandaloneSvg(raw, options.foreground, options.caretColor, recovered),
+        options.embeds ?? [],
+        options.foreground,
+      );
       if (Buffer.byteLength(svg, 'utf8') > MAX_SVG_BYTES) {
         throw new Error('公式生成的 SVG 超过 2 MiB，已停止显示以保护编辑器性能');
       }

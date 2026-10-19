@@ -480,6 +480,68 @@ function isDocumentBoundary(text: string, offset: number): boolean {
     || /^\\(?:begin|end)[ \t]*\{(?:document|enumerate|itemize|description)\}/.test(text.slice(offset));
 }
 
+/**
+ * 数学模式里花括号分组内的 `$...$` / `\(...\)` 不可能结束外层公式（TeX 会报错），
+ * 它们是 `\text{cones $C_i$ over}`、`\tag{$*$}`、`\scalebox{.9}{$x$}` 这类文本盒里的嵌套数学。
+ * 只有内部定界符成对、且所在分组随后真正闭合时才跳过；否则保持原配对，
+ * 正在输入的 `$\frac{a$` 不会吞掉后文公式。
+ */
+function skipGroupedTextMath(
+  text: string,
+  start: number,
+  searchEnd: number,
+  ignoredRanges: readonly TextRange[],
+): number | undefined {
+  const paren = text.startsWith('\\(', start);
+  let cursor = start + (paren ? 2 : 1);
+  let depth = 0;
+  let innerEnd: number | undefined;
+  const limit = Math.min(searchEnd, start + 16384);
+  while (cursor < limit) {
+    const ignored = rangeContaining(ignoredRanges, cursor);
+    if (ignored !== undefined) { cursor = ignored.end; continue; }
+    const character = text[cursor];
+    if (isParagraphBreak(text, cursor)) return undefined;
+    if (character === '\\') {
+      if (innerEnd === undefined && paren && text[cursor + 1] === ')' && depth === 0) {
+        innerEnd = cursor + 2;
+        cursor = innerEnd;
+        depth = 0;
+        continue;
+      }
+      if (innerEnd === undefined && text[cursor + 1] === '(') {
+        if (depth === 0) return undefined;
+        const nested = skipGroupedTextMath(text, cursor, limit, ignoredRanges);
+        if (nested === undefined) return undefined;
+        cursor = nested;
+        continue;
+      }
+      cursor += 2;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      // 内部数学尚未闭合就离开分组：不是合法嵌套。
+      if (depth < 0) return innerEnd;
+    } else if (character === '$' && innerEnd === undefined) {
+      if (text[cursor + 1] === '$') return undefined;
+      if (depth !== 0) {
+        // 内层数学里又有文本盒：`$\text{a $x\text{b $y$}$}$`。
+        const nested = skipGroupedTextMath(text, cursor, limit, ignoredRanges);
+        if (nested === undefined) return undefined;
+        cursor = nested;
+        continue;
+      }
+      if (paren) return undefined;
+      innerEnd = cursor + 1;
+      depth = 0;
+    }
+    cursor += 1;
+  }
+  return undefined;
+}
+
 function findFixedCloser(
   text: string,
   opener: DelimiterOpener,
@@ -547,6 +609,16 @@ function findFixedCloser(
       // An unfinished nested environment must not borrow its internal dollar
       // as an outer close: a later edit could otherwise invalidate a cached prefix.
       return undefined;
+    }
+    if (groupDepth > 0 && opener.kind !== 'environment'
+      && (isSingleDollar(text, cursor) || (text.startsWith('\\(', cursor) && !isEscaped(text, cursor)))) {
+      const nestedEnd = skipGroupedTextMath(text, cursor, searchEnd, ignoredRanges);
+      if (nestedEnd !== undefined) {
+        cursor = nestedEnd;
+        // 被跳过的内层定界符不能算作后续恢复扫描里的“无匹配”区间。
+        lastCommentEnd = cursor;
+        continue;
+      }
     }
     if (groupDepth === 0 && (text.startsWith('\\[', cursor) || text.startsWith('\\(', cursor))
       && !isEscaped(text, cursor)) return undefined;

@@ -36,6 +36,8 @@ export class MathDocumentIndex {
   private pendingRestart: { readonly version: number; readonly start: number } | undefined;
   private scanCount = 0;
   private hasDeclarations = false;
+  /** 公式对象在偏移平移时会重建，缓存只按对象身份复用，不会读到过期文本。 */
+  private lookaheadRegions = new WeakMap<MathRegion, boolean>();
 
   get scans(): number { return this.scanCount; }
 
@@ -73,6 +75,7 @@ export class MathDocumentIndex {
     // boundary. A line inside math/verbatim is not such a boundary.
     let restart = first.rangeOffset === 0 ? 0 : this.text.lastIndexOf('\n', first.rangeOffset - 1) + 1;
     restart = Math.min(restart, this.firstUnclosed);
+    restart = this.lookaheadRestart(restart, first.rangeOffset);
     const crossing = findMathRegionAt(this.regions, restart);
     if (crossing) restart = Math.min(restart, crossing.start);
     const preceding = this.ignoredRanges[lowerBound(this.ignoredRanges, restart) - 1];
@@ -96,9 +99,16 @@ export class MathDocumentIndex {
     }
     parts.push(this.text.slice(cursor, region.end));
     const replacement = parts.join('');
-    const scan = scanMathRegions(replacement, this.options);
+    // 含嵌套定界符时，配对结果取决于其后同一段落的文本，必须带上它再判定。
+    const tail = region.kind !== 'environment'
+      && mayDependOnFollowingText(replacement.slice(region.contentStart - region.start,
+        replacement.length + region.contentEnd - region.end))
+      ? this.text.slice(region.end, region.end + LOOKAHEAD)
+      : '';
+    const scan = scanMathRegions(replacement + tail, this.options);
     this.scanCount++;
-    const scanned = scan.regions;
+    const scanned = scan.regions.filter((entry) => entry.start < replacement.length);
+    const scannedIgnored = scan.ignoredRanges.filter((entry) => entry.start < replacement.length);
     const next = scanned[0];
     // Only reuse surrounding state when the entire edited region is still one
     // closed formula of the same kind. Delimiter edits take the full scan path.
@@ -112,8 +122,8 @@ export class MathDocumentIndex {
       this.regions[lowerBound(this.regions, region.start)] = shifted(next, region.start);
       const from = lowerBound(this.ignoredRanges, region.start);
       const to = lowerBound(this.ignoredRanges, region.end);
-      if (to !== from || scan.ignoredRanges.length > 0) {
-        this.ignoredRanges.splice(from, to - from, ...scan.ignoredRanges.map((entry) => ({
+      if (to !== from || scannedIgnored.length > 0) {
+        this.ignoredRanges.splice(from, to - from, ...scannedIgnored.map((entry) => ({
           start: entry.start + region.start, end: entry.end + region.start,
         })));
       }
@@ -122,7 +132,7 @@ export class MathDocumentIndex {
         : entry.start >= region.end ? shifted(entry, delta) : entry);
       this.ignoredRanges = [
         ...this.ignoredRanges.filter((entry) => entry.end <= region.start),
-        ...scan.ignoredRanges.map((entry) => ({ start: entry.start + region.start, end: entry.end + region.start })),
+        ...scannedIgnored.map((entry) => ({ start: entry.start + region.start, end: entry.end + region.start })),
         ...this.ignoredRanges.filter((entry) => entry.start >= region.end)
           .map((entry) => ({ start: entry.start + delta, end: entry.end + delta })),
       ];
@@ -131,6 +141,47 @@ export class MathDocumentIndex {
     this.pendingRestart = undefined;
     this.version = version;
   }
+
+  /**
+   * 分组内嵌套数学（`$\text{a $x$}$`）的配对会向后查看到分组闭合或段落结束，
+   * 所以同一段落里结束于编辑点之前、含花括号的公式也可能因编辑改变结束位置。
+   */
+  private dependsOnFollowingText(region: MathRegion): boolean {
+    let cached = this.lookaheadRegions.get(region);
+    if (cached === undefined) {
+      cached = mayDependOnFollowingText(this.text.slice(region.contentStart, region.contentEnd));
+      this.lookaheadRegions.set(region, cached);
+    }
+    return cached;
+  }
+
+  /**
+   * 分组内嵌套数学（`$\text{a $x$}$`）的配对会向后查看至多 16384 字符，
+   * 编辑点之前、窗口内可能依赖后文的公式要一并重扫；结构重扫本就延续到文末，额外代价很小。
+   */
+  private lookaheadRestart(restart: number, editOffset: number): number {
+    let result = restart;
+    for (let index = lowerBound(this.regions, restart) - 1; index >= 0; index -= 1) {
+      const region = this.regions[index]!;
+      if (region.end <= editOffset - LOOKAHEAD) break;
+      if (region.kind !== 'environment' && this.dependsOnFollowingText(region)) result = region.start;
+    }
+    return result;
+  }
+}
+
+const LOOKAHEAD = 16384;
+
+/** 只有内部出现定界符、注释或分组未闭合时，扫描器才会为该公式向后查看。 */
+function mayDependOnFollowingText(content: string): boolean {
+  if (/[$%]|\\\(/.test(content)) return true;
+  let depth = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] === '\\') index += 1;
+    else if (content[index] === '{') depth += 1;
+    else if (content[index] === '}') depth = Math.max(0, depth - 1);
+  }
+  return depth > 0;
 }
 
 /** 返回首个起点不小于 offset 的区间。 */

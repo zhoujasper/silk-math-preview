@@ -24,6 +24,8 @@ globalStorage 目录，取消或失败的下载不会被当作已安装。下载
 
 同一个数学表达式含多张图时，保留外侧的运算符、括号、文字及所有图形，由 TeX 整体排版；Markdown math 围栏也采用此路径。复制 PNG 的等比例缩放同步调整描边宽度。
 
+`tabular`、`longtable` 等表格的单元格中含图形时，表格本身仍由 MathJax 排版（中文、横竖线、`\multicolumn` 合并单元格照常），每张图单独交给 TikZ 渲染后放进对应单元格，并按图形源码缓存，编辑其他单元格不重新运行 TeX。单元格中使用 `ampersand replacement=\&` 的写法与 LaTeX 一致。TikZ 预览关闭时表格照常显示，图形位置显示 `tikzcd` 文字占位；某张图出错时以红色占位标出。图形在单元格中以数学轴为中心竖直对齐，与 LaTeX 的基线可能略有差异。
+
 连续输入合并约 80 ms；后台只处理当前请求和最新的等待请求。缺少结束环境时只补
 渲染副本，不改文件；其他语法尚未写完时保留该图形的上一张成功图片。单次渲染超过
 15 秒会回收 Worker，空闲时间默认 60 秒。缩放沿用菜单中的预览大小设置。
@@ -87,6 +89,13 @@ CTAN packages are unavailable. Native declarations keep their order and group sc
 including definitions from unsaved local dependencies. Package/context checkpoints
 avoid recompiling pgfplots on every edit, and all mutable TeX state is restored
 before each frame. Complex pictures can take longer than formulas.
+
+Pictures inside `tabular`/`longtable` cells are rendered separately by TikZ and
+placed into their cells, while MathJax keeps laying out the table (CJK text, rules,
+`\multicolumn`). Pictures are cached by source, so editing other cells does not rerun
+TeX. With TikZ preview off the table still renders with `tikzcd` text placeholders;
+a picture with an error shows a red placeholder. Pictures are centred on the math axis
+of their row, which can differ slightly from LaTeX's baseline.
 
 Implementation references: [Node-TikZJax](https://github.com/prinsss/node-tikzjax),
 [PGF/TikZ](https://github.com/pgf-tikz/pgf), [pgfplots](https://github.com/pgf-tikz/pgfplots).
