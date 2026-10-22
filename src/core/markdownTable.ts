@@ -71,6 +71,12 @@ export function splitMarkdownTableRow(line: string): string[] | undefined {
         index += 1;
         continue;
       }
+      if (character === '\\' && next !== undefined && next !== '\n') {
+        // `\$`、`\*` 等是 Markdown 转义，不能开启公式或拆分单元格。
+        current += character + next;
+        index += 1;
+        continue;
+      }
       if (character === '|') {
         cells.push(current.trim());
         current = '';
@@ -206,6 +212,10 @@ export function markdownTableCellStart(source: string, offset: number): number {
         index += 1;
         continue;
       }
+      if (character === '\\' && next !== undefined && next !== '\n') {
+        index += 1;
+        continue;
+      }
       if (character === '|') {
         cellStart = index + 1;
         continue;
@@ -236,11 +246,23 @@ export function markdownTableCellStart(source: string, offset: number): number {
 }
 
 function isInsideCellInlineMath(text: string, offset: number): boolean {
-  let math = false;
+  let math: 'none' | 'dollar' | 'paren' = 'none';
   for (let cursor = 0; cursor < offset; cursor += 1) {
-    if (text[cursor] === '$' && text[cursor - 1] !== '\\') math = !math;
+    const character = text[cursor];
+    const next = text[cursor + 1];
+    if (math === 'paren') {
+      if (character === '\\' && next === ')') {
+        math = 'none';
+        cursor += 1;
+      }
+    } else if (character === '\\') {
+      if (math === 'none' && next === '(') math = 'paren';
+      cursor += 1;
+    } else if (character === '$') {
+      math = math === 'dollar' ? 'none' : 'dollar';
+    }
   }
-  return math;
+  return math !== 'none';
 }
 
 function caretTokenEnd(text: string, start: number): number | undefined {
@@ -274,35 +296,63 @@ export function ensureCaretInMath(text: string): string {
   return `${text.slice(0, start)}$${text.slice(start, end)}$${text.slice(end)}`;
 }
 
+const CARET_IN_MATH = '$\\class{silk-math-caret}';
+const MARKDOWN_ESCAPABLE = new Set('!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~');
+
+/** 单元格正文里的一个字面字符，写成 MathJax 文本模式确实认识的形式。 */
+function literalTextCharacter(character: string): string {
+  // MathJax 的 textmacros 不认识 \textbackslash / \textasciitilde / \textasciicircum，
+  // 会显示成红色原文（issue #9），这里换成它支持的等价写法。
+  if (character === '\\') return '$\\backslash$';
+  if (character === '~') return '\\~{}';
+  if (character === '^') return '$\\hat{}$';
+  if (character === '$' || character === '%' || character === '#' || character === '&'
+    || character === '_' || character === '{' || character === '}') {
+    return `\\${character}`;
+  }
+  return character;
+}
+
 function escapeMarkdownTableCell(text: string): string {
   let escaped = '';
-  let math = false;
+  let math: 'none' | 'dollar' | 'paren' = 'none';
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index]!;
-    if (character === '$' && text[index - 1] !== '\\') {
-      math = !math;
+    const next = text[index + 1];
+    if (math === 'dollar') {
+      if (character === '$' && text[index - 1] !== '\\') math = 'none';
       escaped += character;
       continue;
     }
-    if (!math) {
-      if (character === '\\') {
-        escaped += '\\textbackslash{}';
+    if (math === 'paren') {
+      if (character === '\\' && next === ')') {
+        math = 'none';
+        escaped += '\\)';
+        index += 1;
         continue;
       }
-      if (character === '%' || character === '#' || character === '&' || character === '_' || character === '{' || character === '}') {
-        escaped += `\\${character}`;
-        continue;
-      }
-      if (character === '~') {
-        escaped += '\\textasciitilde{}';
-        continue;
-      }
-      if (character === '^') {
-        escaped += '\\textasciicircum{}';
-        continue;
-      }
+      escaped += character;
+      continue;
     }
-    escaped += character;
+    if (character === '$') {
+      math = 'dollar';
+      escaped += character;
+      continue;
+    }
+    if (character === '\\' && next === '(') {
+      math = 'paren';
+      escaped += '\\(';
+      index += 1;
+      continue;
+    }
+    if (character === '\\' && next !== undefined && MARKDOWN_ESCAPABLE.has(next)
+      && !text.startsWith(CARET_IN_MATH, index + 1)) {
+      // 与 GitHub 一致：反斜杠加 ASCII 标点是 Markdown 转义，只显示标点本身。
+      escaped += literalTextCharacter(next);
+      index += 1;
+      continue;
+    }
+    escaped += literalTextCharacter(character);
   }
   return escaped;
 }

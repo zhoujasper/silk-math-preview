@@ -1,5 +1,17 @@
 # 更新日志 / Changelog
 
+## 0.3.26 - 2026-10-22
+
+### 中文
+
+- 小写 `\set{...}` 以及 `\ketbra`、`\Ketbra` 现在会自动启用 braket 宏包。此前只有 `\Set` 等命令能触发，`\set{x \mid x>0}` 会显示成红色未知命令（[#10](https://github.com/zhoujasper/silk-math-preview/issues/10)）。文档自己定义的 `\set` 仍然优先。
+- Markdown 表格普通文字里的反斜杠 `\`（例如 `Player 1 \ Player 2`）现在显示为反斜杠本身，不再变成红色的 `\textbackslash`；`~`、`^` 同样修复。`\*`、`\$` 等 Markdown 转义与 GitHub 一样只显示标点，单元格里的 `\(...\)` 按公式显示（[#9](https://github.com/zhoujasper/silk-math-preview/issues/9)）。
+
+### English
+
+- Lowercase `\set{...}`, `\ketbra` and `\Ketbra` now load the braket package automatically. Previously only `\Set` and similar commands triggered it, so `\set{x \mid x>0}` showed as a red unknown command ([#10](https://github.com/zhoujasper/silk-math-preview/issues/10)). A `\set` defined in your own document still takes precedence.
+- A backslash `\` in plain Markdown table text (such as `Player 1 \ Player 2`) now shows as a backslash instead of a red `\textbackslash`; `~` and `^` are fixed the same way. Markdown escapes such as `\*` and `\$` show only the punctuation, as on GitHub, and `\(...\)` inside a cell renders as math ([#9](https://github.com/zhoujasper/silk-math-preview/issues/9)).
+
 ## 0.3.25 - 2026-10-19
 
 ### 中文

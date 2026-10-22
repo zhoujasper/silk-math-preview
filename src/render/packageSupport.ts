@@ -24,7 +24,7 @@ export function renderPackages(declared: readonly string[], expression: string, 
   const packages = ['textmacros', 'silk-si'];
   const available: ReadonlyArray<readonly [string, RegExp]> = [
     ['mathtools', /\\(?:coloneqq|eqqcolon|coloneq|eqcolon|mathclap|mathllap|mathrlap|prescript|smashoperator|DeclarePairedDelimiter(?:X|XPP)?|begin\{(?:dcases|rcases|multlined|smallmatrix))\b/],
-    ['braket', /\\(?:bra|ket|braket|Bra|Ket|Braket|Set)\b/],
+    ['braket', /\\(?:bra|ket|braket|set|ketbra|Bra|Ket|Braket|Set|Ketbra)\b/],
     ['upgreek', /\\up(?:alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|rho|sigma|phi|omega)\b/],
     ['amscd', /\\begin\{CD\}/],
     ['mhchem', /\\(?:ce|pu)\b/],
